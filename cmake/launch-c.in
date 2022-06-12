@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Xcode generator doesn't include the compiler as the
+# first argument, Ninja and Makefiles do. Handle both cases.
+if [[ "$1" = "${CMAKE_C_COMPILER}" ]] ; then
+    shift
+fi
+
+if [ "${CMAKE_CXX_COMPILER_ID}" = "Clang" ]; then
+    export CCACHE_CPP2=true
+fi
+
+export CCACHE_SLOPPINESS=${CCACHE_SLOPPINESS}
+
+if grep -q ' -- ' <<< "$@"; then
+    exec $(echo "$@" | sed 's% -- % -- ${C_LAUNCHER} %')
+else
+    exec "${C_LAUNCHER}" "${CMAKE_C_COMPILER}" "$@"
+fi

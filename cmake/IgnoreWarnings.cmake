@@ -1,0 +1,11 @@
+function(IgnoreWarnings TARGET)
+    get_target_property(type ${TARGET} TYPE)
+    if (NOT ${type} STREQUAL "INTERFACE_LIBRARY")
+        target_compile_options(${TARGET} PRIVATE -w)
+    endif ()
+
+    get_property(PROPERTIES TARGET ${TARGET} PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
+
+    get_property(PROPERTIES_SYSTEM TARGET ${TARGET} PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES)
+    set_property(TARGET ${TARGET} PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${PROPERTIES_SYSTEM};${PROPERTIES}")
+endfunction()
