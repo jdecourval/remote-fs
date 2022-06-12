@@ -6,6 +6,7 @@
 #include <zmqpp/socket.hpp>
 
 #include <filesystem>
+#include <fstream>
 #include <fts.h>
 #include <fuse3/fuse_lowlevel.h>
 #include <optional>
@@ -15,33 +16,40 @@ namespace remotefs
 class InodeFinder
 {
   public:
-    explicit InodeFinder() : file_system{fts_open(path, FTS_PHYSICAL | FTS_NOSTAT | FTS_XDEV, nullptr), fts_close}
+    explicit InodeFinder() : file_system{fts_open(start, FTS_PHYSICAL | FTS_XDEV, nullptr), fts_close}
     {
     }
 
-    std::optional<struct stat> stats(ino64_t inode)
+    std::optional<std::filesystem::path> path(ino64_t inode, unsigned fts_info_mask)
     {
         for (auto file = fts_read(file_system.get()); file != nullptr; file = fts_read(file_system.get()))
         {
-            if (file->fts_ino == inode && file->fts_info & FTS_D)
+            if (file->fts_statp->st_ino == inode && file->fts_info & fts_info_mask)
             {
-                struct stat result
-                {
-                };
-                if (stat(file->fts_path, &result) < 0)
-                {
-                    throw std::runtime_error(std::strerror(errno));
-                }
                 std::cout << "Found file: " << file->fts_path << " for ino: " << inode << std::endl;
-                return result;
+                return {file->fts_path};
             }
         }
 
         return {};
     }
 
+    std::optional<struct stat> stats(ino64_t inode, unsigned fts_info_mask)
+    {
+        return path(inode, fts_info_mask).transform([](const auto &path) {
+            struct stat result
+            {
+            };
+            if (stat(path.c_str(), &result) < 0)
+            {
+                throw std::runtime_error(std::strerror(errno));
+            }
+            return result;
+        });
+    }
+
   private:
-    char *path[2] = {".", nullptr};
+    char *start[2] = {".", nullptr};
     std::unique_ptr<FTS, decltype(&fts_close)> file_system;
 };
 
@@ -100,7 +108,7 @@ void server::start(const std::string &address)
                 }
                 sendmsg.add_raw(&result, sizeof(result));
             }
-            else if (auto stats = InodeFinder().stats(ino); stats)
+            else if (auto stats = InodeFinder().stats(ino, FTS_D | FTS_F); stats)
             {
                 sendmsg.add_raw(&stats.value(), sizeof(stats.value()));
             }
@@ -174,16 +182,34 @@ void server::start(const std::string &address)
         }
         case OPEN: {
             assert(false);
-            break;
         }
         case READ: {
             auto ino = message.get<fuse_ino_t>(3);
-            auto size = message.get<size_t>(4);
+            auto to_read = message.get<size_t>(4);
             auto off = message.get<off_t>(5);
             auto fi = reinterpret_cast<const struct fuse_file_info *>(message.raw_data(6));
             auto key = fi->fh;
-            //            std::ifstream ()
-            assert(false);
+            std::array<char, 1024> buffer;
+            std::cout << "Received read with ino=" << ino << std::endl;
+            if (auto path = remotefs::InodeFinder().path(ino, FTS_F); path)
+            {
+                auto file = std::ifstream(*path, std::ios::in | std::ios::binary);
+                if (!file.fail())
+                {
+                    file.seekg(off);
+                    while (file && to_read > 0)
+                    {
+                        file.read(buffer.data(), std::min(buffer.size(), to_read));
+                        auto written = file.gcount();
+                        to_read -= file.gcount();
+                        sendmsg.add_raw(buffer.data(), written);
+                    }
+                }
+            }
+            else
+            {
+                std::cout << "File not found: " << ino << std::endl;
+            }
             break;
         }
             //        case OPENDIR: {

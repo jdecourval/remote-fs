@@ -154,8 +154,6 @@ void client::start(const std::string &address)
         case LOOKUP:
             if (message.parts() == 3)
             {
-                std::cout << "Received lookup success, ino="
-                          << static_cast<const fuse_entry_param *>(message.raw_data(2))->ino << std::endl;
                 if (fuse_reply_entry(req, static_cast<const fuse_entry_param *>(message.raw_data(2))) < 0)
                 {
                     throw std::runtime_error("fuse_reply_entry failed");
@@ -187,7 +185,7 @@ void client::start(const std::string &address)
             std::cout << "Received read or read dir (" << static_cast<int>(op) << ") in " << message.parts() - 2
                       << " parts" << std::endl;
             fuse_bufvec bufvec{};
-            bufvec.count = message.parts() - 2;
+            bufvec.count = message.parts() - 2; // Two headers
 
             if (bufvec.count == 0)
             {
@@ -210,6 +208,7 @@ void client::start(const std::string &address)
             }
             break;
         }
+
         case OPEN:
             assert(false);
         }
