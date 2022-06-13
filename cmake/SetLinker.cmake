@@ -6,6 +6,7 @@ ProcessorCount(CORES)
 execute_process(COMMAND ${CMAKE_C_COMPILER} -fuse-ld=lld -Wl,--version ERROR_QUIET OUTPUT_VARIABLE lld_version)
 execute_process(COMMAND ${CMAKE_C_COMPILER} -fuse-ld=gold -Wl,--version ERROR_QUIET OUTPUT_VARIABLE gold_version)
 execute_process(COMMAND ${CMAKE_C_COMPILER} -fuse-ld=bfd -Wl,--version ERROR_QUIET OUTPUT_VARIABLE bfd_version)
+execute_process(COMMAND ${CMAKE_C_COMPILER} -fuse-ld=mold -Wl,--version ERROR_QUIET OUTPUT_VARIABLE mold_version)
 
 if ("${gold_version}" MATCHES "GNU gold")
     set(GOLD_AVAILABLE gold CACHE INTERNAL "")
@@ -31,6 +32,10 @@ endif ()
 
 if ("${bfd_version}" MATCHES "GNU ld")
     set(BFD_AVAILABLE bfd CACHE INTERNAL "")
+endif ()
+
+if ("${mold_version}" MATCHES "mold")
+    set(MOLD_AVAILABLE mold CACHE INTERNAL "")
 endif ()
 
 function(set_linker TARGET LINKER)
