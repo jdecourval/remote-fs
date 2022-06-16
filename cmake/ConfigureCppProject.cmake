@@ -11,7 +11,7 @@ find_program(CCACHE_PROGRAM ccache)
 
 
 # Store our own path since CMAKE_CURRENT_LIST_DIR will refer to the caller path inside functions
-set(CLEANCPP_DIR ${CMAKE_CURRENT_LIST_DIR} CACHE INTERNAL "")
+set(CONFIGCPP_DIR ${CMAKE_CURRENT_LIST_DIR} CACHE INTERNAL "")
 
 
 if (NOT FIRST_TIME_SETUP_EXECUTED)
@@ -52,7 +52,6 @@ if (NOT FIRST_TIME_SETUP_EXECUTED)
 
     set_property(CACHE DEFAULT_LINKER PROPERTY STRINGS ${MOLD_AVAILABLE} ${LLD_AVAILABLE} ${GOLD_AVAILABLE} ${BFD_AVAILABLE} default)
 
-    set(FIRST_TIME_SETUP_EXECUTED True CACHE INTERNAL "Whether its the first time this function is called")
     option(DEFAULT_LTO "Default LTO behaviour" OFF)
     option(DEFAULT_CCACHE "Default ccache behaviour" ${CCACHE_AVAILABLE})
     option(DEFAULT_IWYU "Default IWYU behaviour" ${IWYU_AVAILABLE})
@@ -88,6 +87,7 @@ if (NOT FIRST_TIME_SETUP_EXECUTED)
 
     # Disable CDash integration by default
     set(BUILD_TESTING OFF CACHE BOOL "Enable CDash targets")
+    set(FIRST_TIME_SETUP_EXECUTED True CACHE INTERNAL "Whether its the first time this function is called")
 endif ()
 
 function(add_performance_flags TARGET)
@@ -191,8 +191,8 @@ function(add_ccache TARGET)
         set(C_LAUNCHER "${CCACHE_PROGRAM}")
         set(CXX_LAUNCHER "${CCACHE_PROGRAM}")
 
-        configure_file(${CLEANCPP_DIR}/launch-c.in launch-c)
-        configure_file(${CLEANCPP_DIR}/launch-cxx.in launch-cxx)
+        configure_file(${CONFIGCPP_DIR}/launch-c.in launch-c)
+        configure_file(${CONFIGCPP_DIR}/launch-cxx.in launch-cxx)
         execute_process(COMMAND chmod a+rx
                 "${CMAKE_CURRENT_BINARY_DIR}/launch-c"
                 "${CMAKE_CURRENT_BINARY_DIR}/launch-cxx"

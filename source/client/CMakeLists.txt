@@ -3,16 +3,19 @@ include(FindPkgConfig)
 
 add_executable(remote-fs-client
         main.cpp
-        client.cpp
-        client.h
+        Client.cpp
+        Client.h
+        FuseCmdlineOptsWrapper.cpp
+        FuseCmdlineOptsWrapper.h
         )
 
 pkg_check_modules(fuse REQUIRED IMPORTED_TARGET fuse3)
 
 target_link_libraries(remote-fs-client PUBLIC
-        mylib
+        remotefs::remotefs
         zmqpp
         PkgConfig::fuse
+        quill::quill
         )
 
 target_compile_definitions(remote-fs-client PRIVATE

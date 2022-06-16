@@ -3,16 +3,22 @@ include(FindPkgConfig)
 
 add_executable(remote-fs-server
         main.cpp
-        server.cpp
-        server.h
+        Server.cpp
+        Server.h
+        Syscalls.cpp
+        Syscalls.h
+        MessageReceiver.h
+        InodeFinder.h
+        InodeFinder.cpp
         )
 
 pkg_check_modules(fuse REQUIRED IMPORTED_TARGET fuse3)
 
 target_link_libraries(remote-fs-server PUBLIC
-        mylib
+        remotefs::remotefs
         zmqpp
         PkgConfig::fuse
+        quill::quill
         )
 
 target_compile_definitions(remote-fs-server PRIVATE
