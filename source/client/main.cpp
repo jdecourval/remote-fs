@@ -7,11 +7,11 @@
 
 void print_help() {}
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     quill::enable_console_colours();
     quill::start();
 
-    quill::Logger *logger = quill::get_logger();
+    quill::Logger* logger = quill::get_logger();
     logger->set_log_level(quill::LogLevel::TraceL3);
 
     // enable a backtrace that will get flushed when we log CRITICAL

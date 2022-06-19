@@ -1,10 +1,13 @@
 #include "Syscalls.h"
 
 #include <fts.h>
-#include <fuse/fuse_lowlevel.h>
+#include <fuse_lowlevel.h>
 #include <quill/Quill.h>
 
+#include <algorithm>
+#include <filesystem>
 #include <fstream>
+#include <ranges>
 
 #include "InodeFinder.h"
 
@@ -23,7 +26,7 @@ MessageReceiver Syscalls::lookup(MessageReceiver& message) {
         result.attr_timeout = 1;
         result.entry_timeout = 1;
         response.add_raw(&result, sizeof(result));
-        LOG_TRACE_L1(logger, "stat succeeded for path: {} -> ino: {}", path, result.ino);
+        LOG_TRACE_L1(logger, "stat succeeded for path: {} -> ino: {}", path.data(), result.ino);
     } else {
         LOG_TRACE_L1(logger, "stat failed for path: {}: {}", path, std::strerror(errno));
     }
@@ -56,52 +59,67 @@ MessageReceiver Syscalls::readdir(MessageReceiver& message) {
     // Probably not important to return a valid inode number
     // https://fuse-devel.narkive.com/L338RZTz/lookup-readdir-and-inode-numbers
     auto ino = message.get_usr_data<fuse_ino_t>(0);
-    auto size = message.get_usr_data<size_t>(1);  // TODO: Enfore limit
-    auto off = message.get_usr_data<off_t>(2);
+    auto size = message.get_usr_data<size_t>(1);
+    auto off = message.get_usr_data<off_t>(2) + 1;
+    auto total_size = 0ull;
     //        const auto& fi = message.get_usr_data<fuse_file_info>(3);
     //        auto key = fi.fh;
     auto response = message.respond();
     std::array<char, 1024> buffer;
     LOG_TRACE_L1(logger, "Received readdir for ino {} with size {} and offset {}", ino, size, off);
-    auto entry_number = 1;
-    if (off > 0) {
-        LOG_TRACE_L1(logger, "off > 0, we are done");
-        return response;
-    }
 
     auto path = (ino == 1) ? std::optional{"."} : InodeFinder().path(ino, FTS_D);
     if (!path) {
         return response;
     }
 
-    {
-        auto permissions = std::filesystem::status(".").permissions();
-        struct stat stbuf {};
-        stbuf.st_ino = 1;  // This is of course wrong
-        stbuf.st_mode = std::to_underlying(permissions);
-        // Must start at 1
-        auto entry_size = fuse_add_direntry(nullptr, buffer.data(), buffer.size(), ".", &stbuf, entry_number++);
-        response.add_raw(buffer.data(), entry_size);
+    if (off == 0) {
+        {
+            auto permissions = std::filesystem::status(".").permissions();
+            LOG_TRACE_L2(logger, "Adding . to buffer");
+            struct stat stbuf {};
+            stbuf.st_ino = 1;  // This is of course wrong
+            stbuf.st_mode = std::to_underlying(permissions);
+            // Must start at 1
+            auto entry_size = fuse_add_direntry(nullptr, buffer.data(), buffer.size(), ".", &stbuf, off++);
+            if ((total_size += entry_size) > size) {
+                LOG_TRACE_L1(logger, "readdir responded with {} parts and size {}", off - 2, total_size - entry_size);
+                return response;
+            }
+            response.add_raw(buffer.data(), entry_size);
+        }
+
+        {
+            auto permissions = std::filesystem::status("..").permissions();
+            LOG_TRACE_L2(logger, "Adding .. to buffer");
+            struct stat stbuf = {};
+            stbuf.st_ino = 1;  // This is of course wrong
+            stbuf.st_mode = std::to_underlying(permissions);
+            auto entry_size = fuse_add_direntry(nullptr, buffer.data(), buffer.size(), "..", &stbuf, off++);
+            if ((total_size += entry_size) > size) {
+                LOG_TRACE_L1(logger, "readdir responded with {} parts and size {}", off - 2, total_size - entry_size);
+                return response;
+            }
+            response.add_raw(buffer.data(), entry_size);
+        }
     }
 
-    {
-        auto permissions = std::filesystem::status("..").permissions();
-        struct stat stbuf = {};
-        stbuf.st_ino = 1;  // This is of course wrong
-        stbuf.st_mode = std::to_underlying(permissions);
-        auto entry_size = fuse_add_direntry(nullptr, buffer.data(), buffer.size(), "..", &stbuf, entry_number++);
-        response.add_raw(buffer.data(), entry_size);
-    }
-
-    for (const auto& entry : std::filesystem::directory_iterator{std::filesystem::path{path.value()}}) {
+    for (const auto& entry : std::filesystem::directory_iterator{std::filesystem::path{path.value()}} |
+                                 std::views::drop(std::max(0l, off - 2))) {
         auto filename = entry.path().filename();
+        LOG_TRACE_L2(logger, "Adding {} to buffer", filename);
         auto permissions = entry.status().permissions();
         struct stat stbuf {};
         stbuf.st_ino = 2;  // This is of course wrong
         stbuf.st_mode = std::to_underlying(permissions);
         // fuse_req_t is ignored
-        auto entry_size =
-            fuse_add_direntry(nullptr, buffer.data(), buffer.size(), filename.c_str(), &stbuf, entry_number++);
+        auto entry_size = fuse_add_direntry(nullptr, buffer.data(), buffer.size(), filename.c_str(), &stbuf, off++);
+
+        if ((total_size += entry_size) > size) {
+            LOG_TRACE_L1(logger, "readdir responded with {} parts and size {}", off - 2, total_size - entry_size);
+            return response;
+        }
+
         if (entry_size > buffer.size()) {
             throw std::runtime_error("Buffer too small");
         }
@@ -110,7 +128,7 @@ MessageReceiver Syscalls::readdir(MessageReceiver& message) {
         response.add_raw(buffer.data(), entry_size);
     }
 
-    LOG_TRACE_L1(logger, "readdir responded with {} parts", entry_number - 1);
+    LOG_TRACE_L1(logger, "readdir responded with {} parts and size", off - 1, total_size);
     return response;
 }
 

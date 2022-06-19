@@ -8,17 +8,13 @@
 #include <zmqpp/reactor.hpp>
 #include <zmqpp/socket.hpp>
 
+#include "FuseBufVec.h"
 #include "FuseCmdlineOptsWrapper.h"
 #include "config.h"
 #include "remotefs/FuseOp.h"
 
 namespace remotefs {
-struct fuse_bufvec {
-    decltype(::fuse_bufvec::count) count;
-    decltype(::fuse_bufvec::idx) idx;
-    decltype(::fuse_bufvec::off) off;
-    std::array<fuse_buf, settings::client::FUSE_READ_BUFFER_SIZE - sizeof(count) - sizeof(idx) - sizeof(off)> buf;
-};
+
 Client::Client(int argc, char *argv[])
     : logger(quill::get_logger()),
       socket(context, zmqpp::socket_type::xrequest) {
@@ -121,7 +117,7 @@ void Client::start(const std::string &address) {
             case READ:
             case READDIR: {
                 LOG_TRACE_L1(logger, "Received read or readdir in {} parts", message.parts() - 2);
-                fuse_bufvec bufvec{};
+                auto bufvec = FuseBufVec<settings::client::FUSE_READ_BUFFER_SIZE>{};
                 bufvec.count = message.parts() - 2;  // Two headers
 
                 if (bufvec.count == 0) {
@@ -131,15 +127,37 @@ void Client::start(const std::string &address) {
 
                 bufvec.idx = 0;
                 bufvec.off = 0;
-                assert(bufvec.count <= bufvec.buf.size());
-                for (auto i = 0u; i < bufvec.count; i++) {
-                    bufvec.buf[i].mem = const_cast<void *>(message.raw_data(i + 2));
-                    bufvec.buf[i].size = message.size(i + 2);
+
+                if (bufvec.count <= bufvec.buf.size()) {
+                    // Use the stack for small buffers
+                    for (auto i = 0u; i < bufvec.count; i++) {
+                        bufvec.buf[i].mem = const_cast<void *>(message.raw_data(i + 2));
+                        bufvec.buf[i].size = message.size(i + 2);
+                    }
+
+                    if (fuse_reply_data(req, reinterpret_cast<::fuse_bufvec *>(&bufvec), FUSE_BUF_SPLICE_MOVE) < 0) {
+                        throw std::runtime_error("fuse_reply_data failed");
+                    }
+                } else {
+                    LOG_TRACE_L2(logger, "Buffer is too small, allocating");
+                    auto buffer = std::unique_ptr<fuse_bufvec, decltype(&free)>(
+                        reinterpret_cast<fuse_bufvec *>(malloc(sizeof(fuse_bufvec) + bufvec.count * sizeof(fuse_buf))),
+                        free);
+
+                    buffer->count = bufvec.count;
+                    buffer->idx = 0;
+                    buffer->off = 0;
+
+                    for (auto i = 0u; i < buffer->count; i++) {
+                        buffer->buf[i].mem = const_cast<void *>(message.raw_data(i + 2));
+                        buffer->buf[i].size = message.size(i + 2);
+                    }
+
+                    if (fuse_reply_data(req, buffer.get(), FUSE_BUF_SPLICE_MOVE) < 0) {
+                        throw std::runtime_error("fuse_reply_data failed");
+                    }
                 }
 
-                if (fuse_reply_data(req, reinterpret_cast<::fuse_bufvec *>(&bufvec), FUSE_BUF_SPLICE_MOVE) < 0) {
-                    throw std::runtime_error("fuse_reply_data failed");
-                }
                 break;
             }
 
