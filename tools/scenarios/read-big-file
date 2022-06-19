@@ -1,0 +1,7 @@
+setup() {
+    fallocate -l 5G target/bigfile
+}
+
+benchmark() {
+    dd if=mountpoint/bigfile of=/dev/null bs=1M
+}

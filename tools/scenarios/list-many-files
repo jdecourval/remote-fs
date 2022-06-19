@@ -1,0 +1,10 @@
+setup() {
+  for i in {1..10000}
+  do
+    touch target/$i
+  done
+}
+
+benchmark() {
+  time ls -la mountpoint >/dev/null
+}

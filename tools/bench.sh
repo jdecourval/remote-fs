@@ -1,31 +1,38 @@
 #!/usr/bin/env bash
 
+directory=$(dirname "$(readlink -f "$0")")
+
 usage() {
-  echo "$0 server client [endpoint]"
+  echo "$0 scenario server client [endpoint]"
+  echo "scenario: scenario to test. One of: $(ls $directory/scenarios | xargs)"
   echo server: Path to the server to benchmark
   echo client: Path to the client to benchmark
   echo endpoint: zmq compatible endpoint, e.g. tcp://127.0.0.1:8943. Default to a random unix socket.
   exit 0
 }
 
-[ $# != 2 ] && [ $# != 3 ] && { usage; }
-endpoint=${3:-"ipc://$(mktemp)"}
+[ $# != 3 ] && [ $# != 4 ] && { usage; }
+source "$directory/scenarios/$1"
+server="$2"
+client="$3"
+endpoint=${4:-"ipc://$(mktemp)"}
 
 temp=$(mktemp -d)
 pushd "$temp" || exit 1
 mkdir target mountpoint
-fallocate -l 5G target/bigfile
+setup
 
 cd target
-/usr/bin/time -v "$1" "$endpoint" &
+/usr/bin/time -v "$server" "$endpoint" &
 cd ..
 
-/usr/bin/time -v "$2" -f mountpoint "$endpoint" &
+/usr/bin/time -v "$client" -f mountpoint "$endpoint" &
 sleep 2
-dd if=mountpoint/bigfile of=/dev/null bs=1M
+
+benchmark
 killall remote-fs-client remote-fs-server
-sleep 2
-fusermount -u mountpoint
+sleep 1
+fusermount -u mountpoint 2>/dev/null
 rm -r target mountpoint
-popd
+popd >/dev/null
 rmdir "$temp"
