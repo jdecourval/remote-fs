@@ -15,24 +15,27 @@ usage() {
 source "$directory/scenarios/$1"
 server="$2"
 client="$3"
-endpoint=${4:-"ipc://$(mktemp)"}
+socket=$(mktemp)
+endpoint=${4:-"ipc://$socket"}
 
 temp=$(mktemp -d)
-pushd "$temp" || exit 1
+pushd "$temp" > /dev/null || exit 1
 mkdir target mountpoint
 setup
 
 cd target
-/usr/bin/time -v "$server" "$endpoint" &
+/usr/bin/time -v perf stat "$server" "$endpoint" &
 cd ..
 
-/usr/bin/time -v "$client" -f mountpoint "$endpoint" &
+/usr/bin/time -v perf stat "$client" -f mountpoint "$endpoint" &
 sleep 2
 
 benchmark
 killall remote-fs-client remote-fs-server
 sleep 1
+killall -s KILL remote-fs-client remote-fs-server
 fusermount -u mountpoint 2>/dev/null
 rm -r target mountpoint
 popd >/dev/null
 rmdir "$temp"
+rm "$socket"
