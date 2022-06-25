@@ -8,6 +8,7 @@
 void print_help() {}
 
 int main(int argc, char* argv[]) {
+    auto metrics = false;
     quill::enable_console_colours();
     quill::start();
 
@@ -33,9 +34,13 @@ int main(int argc, char* argv[]) {
             print_help();
             return 0;
         }
+
+        if (tmp == "--metrics" || tmp == "-m") {
+            metrics = true;
+        }
     }
 
-    auto server = remotefs::Server();
+    auto server = remotefs::Server(metrics);
     LOG_DEBUG(logger, "Ready do start");
     server.start(args.back());
 

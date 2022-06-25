@@ -6,6 +6,7 @@
 namespace quill {
 class Logger;
 }
+
 namespace remotefs {
 
 class Syscalls {

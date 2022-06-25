@@ -24,7 +24,7 @@ mkdir target mountpoint
 setup
 
 cd target
-/usr/bin/time -v perf stat "$server" "$endpoint" &
+/usr/bin/time -v perf stat "$server" --metrics "$endpoint" &
 cd ..
 
 /usr/bin/time -v perf stat "$client" -f mountpoint "$endpoint" &

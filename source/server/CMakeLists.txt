@@ -32,5 +32,5 @@ configure_cpp_project(remote-fs-server)
 
 if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     message(STATUS "Disabling verbose logging for target remote-fs-server")
-    target_compile_definitions(remote-fs-server PRIVATE QUILL_ACTIVE_LOG_LEVEL=QUILL_LOG_LEVEL_INFO)
+    target_compile_definitions(remote-fs-server PRIVATE QUILL_ACTIVE_LOG_LEVEL=QUILL_LOG_LEVEL_INFO REMOTEFS_DISABLE_METRICS)
 endif ()

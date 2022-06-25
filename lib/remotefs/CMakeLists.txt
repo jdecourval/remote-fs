@@ -2,6 +2,8 @@ include(ConfigureCppProject)
 
 add_library(remotefs
         remotefs/FuseOp.h
+        remotefs/Metrics.h
+        remotefs/Metrics.cpp
         )
 
 set_target_properties(remotefs PROPERTIES LINKER_LANGUAGE CXX)
