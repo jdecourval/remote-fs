@@ -104,8 +104,8 @@ MessageReceiver Syscalls::readdir(MessageReceiver& message) {
         }
     }
 
-    for (const auto& entry : std::filesystem::directory_iterator{std::filesystem::path{path.value()}} |
-                                 std::views::drop(std::max(0l, off - 2))) {
+    for (const auto& entry :
+         std::next(std::filesystem::directory_iterator{std::filesystem::path{path.value()}}, std::max(0l, off - 2))) {
         auto filename = entry.path().filename();
         LOG_TRACE_L2(logger, "Adding {} to buffer", filename);
         auto permissions = entry.status().permissions();
