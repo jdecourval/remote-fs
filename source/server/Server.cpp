@@ -3,6 +3,7 @@
 #include <quill/Quill.h>
 
 #include <optional>
+#include <zmqpp/reactor.hpp>
 
 #include "MessageReceiver.h"
 
@@ -34,6 +35,7 @@ Server::Server(bool metrics_on_stop)
       _metrics_on_stop{metrics_on_stop} {
     std::signal(SIGUSR1, signal_usr1_handler);
     std::signal(SIGTERM, signal_term_handler);
+    socket.monitor("inproc://monitor", zmqpp::event::accepted | zmqpp::event::closed | zmqpp::event::disconnected);
 }
 
 void Server::start(const std::string& address) {
@@ -51,27 +53,18 @@ void Server::start(const std::string& address) {
     auto& lookup_timing = metric_registry.create_histogram("message-received-lookup");
     auto& send_timing = metric_registry.create_histogram("message-sent");
 
-    while (true) {
-        if (log_requested) {
-            log_requested = false;
-            std::cerr << metric_registry << std::flush;
-        }
+    auto monitoring_socket = zmqpp::socket{context, zmqpp::socket_type::pair};
+    monitoring_socket.connect("inproc://monitor");
 
-        if (stop_requested) {
-            stop_requested = false;
-            LOG_INFO(logger, "Received SIGTERM");
-            break;
-        }
-
+    auto reactor = zmqpp::reactor();
+    reactor.add(socket, [&] {
         MessageReceiver message;
-        {
-            auto tracker = wait_time.track_scope();
-            socket.receive(message);
-        }
+        socket.receive(message);
 
         if (message.parts() == 0) {
             loop_breaked.increment();
-            continue;
+            LOG_WARNING(logger, "Received empty message");
+            return;
         }
 
         LOG_DEBUG(logger, "Received {}, with {} parts", static_cast<int>(message.op()), message.parts());
@@ -109,6 +102,44 @@ void Server::start(const std::string& address) {
         {
             auto tracker = send_timing.track_scope();
             socket.send(response);
+        }
+    });
+
+    reactor.add(monitoring_socket, [&] {
+        auto message = zmqpp::message{};
+        monitoring_socket.receive(message);
+
+        if (message.parts() == 0) {
+            loop_breaked.increment();
+            LOG_WARNING(logger, "Received empty monitoring message");
+            return;
+        }
+
+        struct __attribute__((packed)) event {
+            uint16_t number;
+            uint32_t value;
+        };
+
+        auto event = reinterpret_cast<const struct event*>(message.raw_data(0));
+        LOG_DEBUG(logger, "Received event message, with {} parts, event number={}, event value={}, address={}",
+                  message.parts(), event->number, event->value, message.get(1));
+    });
+
+    while (true) {
+        {
+            auto tracker = wait_time.track_scope();
+            reactor.poll();
+        }
+
+        if (log_requested) {
+            log_requested = false;
+            std::cerr << metric_registry << std::flush;
+        }
+
+        if (stop_requested) {
+            stop_requested = false;
+            LOG_INFO(logger, "Received SIGTERM");
+            break;
         }
     }
 
