@@ -1,0 +1,10 @@
+setup() {
+    socat -r >(wc -c | sed 's/^/bytes read: /' >&2) -R >(wc -c | sed 's/^/bytes written: /' >&2) UNIX-LISTEN:"/tmp/socat-write" UNIX-CONNECT:"/tmp/socat-read"&
+    endpoint_read=ipc:///tmp/socat-read
+    endpoint_write=ipc:///tmp/socat-write
+    fallocate -l 5G target/bigfile
+}
+
+benchmark() {
+    dd if=mountpoint/bigfile of=/dev/null bs=1M
+}

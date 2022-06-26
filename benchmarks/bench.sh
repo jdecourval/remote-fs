@@ -15,27 +15,28 @@ usage() {
 source "$directory/scenarios/$1"
 server="$2"
 client="$3"
-socket=$(mktemp)
-endpoint=${4:-"ipc://$socket"}
 
 temp=$(mktemp -d)
 pushd "$temp" > /dev/null || exit 1
 mkdir target mountpoint
 setup
+endpoint_write=${endpoint_write:-"ipc://$temp/socket"}
+endpoint_read=${endpoint_read:-"ipc://$temp/socket"}
 
 cd target
-/usr/bin/time -v perf stat "$server" --metrics "$endpoint" &
+/usr/bin/time -v perf stat "$server" --metrics "$endpoint_read" &
 cd ..
 
-/usr/bin/time -v perf stat "$client" -f mountpoint "$endpoint" &
+/usr/bin/time -v perf stat "$client" -f mountpoint "$endpoint_write" &
 sleep 2
 
 benchmark
-killall remote-fs-client remote-fs-server
+killall remote-fs-client remote-fs-server socat 2> /dev/null
 sleep 1
-killall -s KILL remote-fs-client remote-fs-server
+killall -s KILL remote-fs-client remote-fs-server socat 2> /dev/null
 fusermount -u mountpoint 2>/dev/null
 rm -r target mountpoint
 popd >/dev/null
+if [[ $endpoint_read == ipc* ]]; then rm "$(sed 's/ipc:\/\///' <<< "$endpoint_read")"; fi
 rmdir "$temp"
-rm "$socket"
+exit 0
