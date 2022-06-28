@@ -1,6 +1,7 @@
 #ifndef REMOTE_FS_SYSCALLS_H
 #define REMOTE_FS_SYSCALLS_H
 
+#include "InodeCache.h"
 #include "MessageReceiver.h"
 
 namespace quill {
@@ -19,6 +20,7 @@ class Syscalls {
 
    private:
     quill::Logger* logger;
+    InodeCache inode_cache;
 };
 
 }  // namespace remotefs
