@@ -1,8 +1,8 @@
 #ifndef REMOTE_FS_SYSCALLS_H
 #define REMOTE_FS_SYSCALLS_H
 
-#include "InodeCache.h"
 #include "MessageReceiver.h"
+#include "remotefs/inodecache/InodeCache.h"
 
 namespace quill {
 class Logger;

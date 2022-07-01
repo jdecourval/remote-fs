@@ -7,7 +7,7 @@
 
 #include "Syscalls.h"
 #include "config.h"
-#include "remotefs/Metrics.h"
+#include "remotefs/metrics/Metrics.h"
 
 namespace quill {
 class Logger;

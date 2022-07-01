@@ -22,5 +22,6 @@ endif ()
 set(CMAKE_CXX_STANDARD 23)
 
 add_subdirectory(lib)
-add_subdirectory(source)
+add_subdirectory(sources)
 add_subdirectory(benchmarks)
+add_subdirectory(tests)

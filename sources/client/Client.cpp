@@ -11,7 +11,7 @@
 #include "FuseBufVec.h"
 #include "FuseCmdlineOptsWrapper.h"
 #include "config.h"
-#include "remotefs/FuseOp.h"
+#include "remotefs/tools/FuseOp.h"
 
 namespace remotefs {
 

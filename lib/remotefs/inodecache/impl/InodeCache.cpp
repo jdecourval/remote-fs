@@ -1,4 +1,4 @@
-#include "InodeCache.h"
+#include "remotefs/inodecache/InodeCache.h"
 
 namespace remotefs {
 

@@ -58,7 +58,7 @@ function(addCustomTest NAME TARGET COMMAND)
     endif ()
 endfunction()
 
-function(addCatchTests NAME SOURCE)
+function(add_catch_tests NAME SOURCE)
     set(SOURCES ${SOURCE} ${ARGN})
     if (TARGET ${NAME})
         message(FATAL_ERROR "There already is a target named ${NAME}")
@@ -76,13 +76,6 @@ function(addCatchTests NAME SOURCE)
             PRIVATE Catch2
             )
 
-    # Cause test to get deleted on failure
-    #    add_custom_command(TARGET ${NAME}
-    #            POST_BUILD
-    #            COMMAND ${NAME}
-    #            COMMENT "Run tests"
-    #            )
-
     # Have to run ctest two times to detect tests
     catch_discover_tests(${NAME}
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -91,7 +84,7 @@ function(addCatchTests NAME SOURCE)
     add_dependencies(all_test ${NAME})
 endfunction()
 
-function(addDoctestTests NAME SOURCE)
+function(add_doctest_tests NAME SOURCE)
     set(SOURCES ${SOURCE} ${ARGN})
     if (TARGET ${NAME})
         message(FATAL_ERROR "There already is a target named ${NAME}")
@@ -106,15 +99,8 @@ function(addDoctestTests NAME SOURCE)
             )
 
     target_link_libraries(${NAME}
-            PRIVATE doctest
+            PRIVATE doctest_with_main
             )
-
-    # Cause test to get deleted on failure
-    #    add_custom_command(TARGET ${NAME}
-    #            POST_BUILD
-    #            COMMAND ${NAME}
-    #            COMMENT "Run tests"
-    #            )
 
     # Have to run ctest two times to detect tests
     doctest_discover_tests(${NAME}
@@ -125,12 +111,12 @@ function(addDoctestTests NAME SOURCE)
 endfunction()
 
 # Add Catch2 tests named NAME, testing the library TARGET and having sources SOURCE + ARGN
-function(addLibCatchTests NAME TARGET SOURCE)
+function(add_lib_catch_tests NAME TARGET SOURCE)
     if (NOT Catch2_SOURCE_DIR)
         message(FATAL_ERROR "Catch not found")
     endif ()
 
-    addCatchTests(${NAME} ${SOURCE} ${ARGN})
+    add_catch_tests(${NAME} ${SOURCE} ${ARGN})
 
     target_link_libraries(${NAME} PRIVATE ${TARGET})
 
@@ -144,12 +130,12 @@ function(addLibCatchTests NAME TARGET SOURCE)
     endif ()
 endfunction()
 
-function(addLibDoctestTests NAME TARGET SOURCE)
+function(add_lib_doctest_tests NAME TARGET SOURCE)
     if (NOT doctest_SOURCE_DIR)
         message(FATAL_ERROR "doctest not found")
     endif ()
 
-    addDoctestTests(${NAME} ${SOURCE} ${ARGN})
+    add_doctest_tests(${NAME} ${SOURCE} ${ARGN})
 
     target_link_libraries(${NAME} PRIVATE ${TARGET})
 
@@ -165,7 +151,7 @@ endfunction()
 
 
 # Add a compile time test named NAME having sources SOURCE + ARGN
-function(addCompileTest NAME SOURCE)
+function(add_compile_tests NAME SOURCE)
     set(SOURCES ${SOURCE} ${ARGN})
 
     add_library(${NAME} EXCLUDE_FROM_ALL

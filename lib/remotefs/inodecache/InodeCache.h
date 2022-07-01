@@ -22,6 +22,11 @@ class InodeCache {
 
     Inode* lookup(std::string_view path);
 
+    [[nodiscard]] inline const Inode& inode_from_ino(fuse_ino_t ino) const {
+        return cache.at(ino);
+    }
+
+   private:
     template <typename... Ts>
     Inode& create_inode(Ts&&... params) {
         auto& entry = cache.emplace_back(std::forward<Ts>(params)...);
@@ -29,11 +34,6 @@ class InodeCache {
         return entry;
     }
 
-    [[nodiscard]] inline const Inode& inode_from_ino(fuse_ino_t ino) const {
-        return cache.at(ino);
-    }
-
-   private:
     std::vector<Inode> cache;
 };
 

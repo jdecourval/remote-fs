@@ -1,4 +1,4 @@
-#include "remotefs/Metrics.h"
+#include "remotefs/metrics/Metrics.h"
 
 #include <ostream>
 

@@ -3,7 +3,7 @@
 
 #include <zmqpp/message.hpp>
 
-#include "remotefs/FuseOp.h"
+#include "remotefs/tools/FuseOp.h"
 
 namespace remotefs {
 /// Includes the route
