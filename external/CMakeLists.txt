@@ -58,3 +58,16 @@ FetchContent_Populate(quill)
 list(APPEND CMAKE_MODULE_PATH ${quill_SOURCE_DIR}/quill/cmake)
 add_subdirectory(${quill_SOURCE_DIR} ${quill_BINARY_DIR})
 IgnoreWarnings(quill)
+
+#------------------------------------------------------------------------------
+#  argparse - Argument Parser for Modern C++
+FetchContent_Declare(
+        argparse
+        GIT_REPOSITORY https://github.com/p-ranav/argparse.git
+        GIT_TAG v2.6
+        UPDATE_DISCONNECTED TRUE
+        GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(argparse)
+IgnoreWarnings(argparse)

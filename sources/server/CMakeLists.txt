@@ -17,6 +17,7 @@ target_link_libraries(remote-fs-server PUBLIC
         zmqpp
         PkgConfig::fuse
         quill::quill
+        argparse::argparse
         )
 
 target_compile_definitions(remote-fs-server PRIVATE

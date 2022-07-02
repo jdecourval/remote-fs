@@ -18,6 +18,7 @@ std::ostream& operator<<(std::ostream& output, const MetricRegistry<false>::Metr
 std::ostream& operator<<(std::ostream& output, const MetricRegistry<true>::Metric&) {
     return output;
 }
+
 template <>
 std::ostream& MetricRegistry<false>::Counter::print(std::ostream& output) const {
     output << _name << ":count:" << value;
