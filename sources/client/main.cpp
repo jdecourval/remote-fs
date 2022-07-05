@@ -19,22 +19,6 @@ int main(int argc, char* argv[]) {
 
     auto args = std::span(argv, argc);
 
-    // Print help if no arguments are given
-    if (args.size() == 1) {
-        print_help();
-        return 0;
-    }
-
-    // process parameters
-    for (auto arg : args) {
-        auto tmp = std::string_view(arg);
-
-        if (tmp == "--help" || tmp == "-h") {
-            print_help();
-            return 0;
-        }
-    }
-
     auto l = remotefs::Client(argc - 1, argv);
     LOG_DEBUG(logger, "Ready do start");
     l.start(args.back());
