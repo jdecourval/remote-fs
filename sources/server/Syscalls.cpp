@@ -1,6 +1,7 @@
 #include "Syscalls.h"
 
 #include <fuse_lowlevel.h>
+#include <liburing.h>
 #include <quill/Quill.h>
 
 #include <algorithm>
@@ -18,10 +19,12 @@ Syscalls::Syscalls() noexcept
 }
 
 MessageReceiver Syscalls::lookup(MessageReceiver& message) {
+    auto ino = message.get_usr_data<fuse_ino_t>(0);
     auto path = message.get_usr_data_string(1);
     auto response = message.respond();
 
-    if (auto entry = inode_cache.lookup(path); entry != nullptr) {
+    if (auto entry = inode_cache.lookup((std::filesystem::path{inode_cache.inode_from_ino(ino).path} / path).c_str());
+        entry != nullptr) {
         auto result = fuse_entry_param{
             .ino = entry->stats.st_ino, .generation = 0, .attr = entry->stats, .attr_timeout = 1, .entry_timeout = 1};
         response.add_raw(&result, sizeof(result));
