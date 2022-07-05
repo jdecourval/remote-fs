@@ -1,7 +1,6 @@
 #include "Syscalls.h"
 
 #include <fuse_lowlevel.h>
-#include <liburing.h>
 #include <quill/Quill.h>
 
 #include <algorithm>
@@ -14,8 +13,6 @@ namespace remotefs {
 Syscalls::Syscalls() noexcept
     : logger{quill::get_logger()} {
     // Inodes 0 and 1 are special
-    inode_cache.lookup(".");
-    inode_cache.lookup(".");
 }
 
 MessageReceiver Syscalls::lookup(MessageReceiver& message) {
@@ -23,10 +20,10 @@ MessageReceiver Syscalls::lookup(MessageReceiver& message) {
     auto path = message.get_usr_data_string(1);
     auto response = message.respond();
 
-    if (auto entry = inode_cache.lookup((std::filesystem::path{inode_cache.inode_from_ino(ino).path} / path).c_str());
+    if (auto entry = inode_cache.lookup((std::filesystem::path{inode_cache.inode_from_ino(ino).first} / path).c_str());
         entry != nullptr) {
         auto result = fuse_entry_param{
-            .ino = entry->stats.st_ino, .generation = 0, .attr = entry->stats, .attr_timeout = 1, .entry_timeout = 1};
+            .ino = entry->second.st_ino, .generation = 0, .attr = entry->second, .attr_timeout = 1, .entry_timeout = 1};
         response.add_raw(&result, sizeof(result));
         LOG_TRACE_L1(logger, "stat succeeded for path: {} -> ino: {}", path.data(), result.ino);
     } else {
@@ -41,7 +38,7 @@ MessageReceiver Syscalls::getattr(MessageReceiver& message) {
     auto response = message.respond();
 
     const auto& entry = inode_cache.inode_from_ino(ino);
-    response.add_raw(&entry.stats, sizeof(entry.stats));
+    response.add_raw(&entry.second, sizeof(entry.second));
     LOG_TRACE_L1(logger, "getattr: ino found in cache{}", ino);
 
     return response;
@@ -63,7 +60,7 @@ MessageReceiver Syscalls::readdir(MessageReceiver& message) {
     if (off == 0) {
         LOG_TRACE_L2(logger, "Adding . to buffer");
         // off must start at 1
-        auto entry_size = fuse_add_direntry(nullptr, buffer.data(), buffer.size(), ".", &root_entry.stats, off++);
+        auto entry_size = fuse_add_direntry(nullptr, buffer.data(), buffer.size(), ".", &root_entry.second, off++);
         if ((total_size += entry_size) > size) {
             LOG_TRACE_L1(logger, "readdir responded with {} parts and size {}", off - 2, total_size - entry_size);
             return response;
@@ -85,7 +82,7 @@ MessageReceiver Syscalls::readdir(MessageReceiver& message) {
         response.add_raw(buffer.data(), entry_size);
     }
 
-    for (const auto& entry : std::next(std::filesystem::directory_iterator{std::filesystem::path{root_entry.path}},
+    for (const auto& entry : std::next(std::filesystem::directory_iterator{std::filesystem::path{root_entry.first}},
                                        std::max(0l, off - 2))) {
         auto filename = entry.path().filename();
         LOG_TRACE_L2(logger, "Adding {} to buffer at offset {}", filename, off);
@@ -120,7 +117,7 @@ MessageReceiver Syscalls::read(MessageReceiver& message) {
     LOG_TRACE_L1(logger, "Received read for ino {}, with size {} and offset {}", ino, to_read, off);
     auto response = message.respond();
 
-    const auto& path = inode_cache.inode_from_ino(ino).path;
+    const auto& path = inode_cache.inode_from_ino(ino).first;
     auto file = std::ifstream(path.data(), std::ios::in | std::ios::binary);
     if (!file.fail()) {
         file.seekg(off);

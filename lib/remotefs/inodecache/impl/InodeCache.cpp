@@ -2,8 +2,12 @@
 
 namespace remotefs {
 
-InodeCache::Inode* InodeCache::lookup(std::string_view path) {
+InodeCache::Inode* InodeCache::lookup(std::string path) {
     using Stat = struct stat;
+
+    if (auto found = cache.find(path); found != cache.end()) {
+        return &*(found);
+    }
 
     auto stats = Stat{};
     if (stat(path.data(), &stats) >= 0) {
