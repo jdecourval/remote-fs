@@ -40,10 +40,10 @@ endif ()
 
 function(set_linker TARGET LINKER)
     if (NOT LINKER STREQUAL "default")
-        target_link_libraries(${TARGET} PRIVATE "-fuse-ld=${LINKER}")
+        target_link_options(${TARGET} PRIVATE "-fuse-ld=${LINKER}")
 
         if (${LINKER}_flags)
-            target_link_libraries(${TARGET} PRIVATE ${${LINKER}_flags})
+            target_link_options(${TARGET} PRIVATE ${${LINKER}_flags})
         endif ()
     endif ()
 endfunction()
