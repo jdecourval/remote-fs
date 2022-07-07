@@ -2,6 +2,7 @@ include(ConfigureCppProject)
 
 add_library(remotefs
         remotefs/tools/FuseOp.h
+        remotefs/tools/MessageWrappers.h
         remotefs/metrics/Metrics.h
         remotefs/metrics/impl/Metrics.cpp
         remotefs/inodecache/InodeCache.h

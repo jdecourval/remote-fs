@@ -7,7 +7,6 @@ add_executable(remote-fs-server
         Server.h
         Syscalls.cpp
         Syscalls.h
-        MessageReceiver.h
         )
 
 pkg_check_modules(fuse REQUIRED IMPORTED_TARGET fuse3)

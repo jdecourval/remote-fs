@@ -5,8 +5,6 @@
 #include <optional>
 #include <zmqpp/reactor.hpp>
 
-#include "MessageReceiver.h"
-
 namespace remotefs {
 
 extern "C" {
@@ -61,13 +59,13 @@ void Server::start(const std::string& address) {
         MessageReceiver message;
         socket.receive(message);
 
-        if (message.parts() == 0) {
+        if (message.empty()) {
             loop_breaked.increment();
             LOG_WARNING(logger, "Received empty message");
             return;
         }
 
-        LOG_DEBUG(logger, "Received {}, with {} parts", static_cast<int>(message.op()), message.parts());
+        LOG_DEBUG(logger, "Received {}, with {} parts", static_cast<int>(message.op()), message.usr_data_parts());
 
         auto response = [&]() {
             switch (message.op()) {
@@ -85,7 +83,7 @@ void Server::start(const std::string& address) {
                 }
                 case OPEN: {
                     auto tracker = open_timing.track_scope();
-                    throw std::logic_error("Not implemented");
+                    return syscalls.open(message);
                 }
                 case READ: {
                     auto tracker = read_timing.track_scope();

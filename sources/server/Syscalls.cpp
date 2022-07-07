@@ -110,9 +110,9 @@ MessageReceiver Syscalls::readdir(MessageReceiver& message) {
 }
 
 MessageReceiver Syscalls::read(MessageReceiver& message) {
-    auto ino = message.get<fuse_ino_t>(3);
-    auto to_read = message.get<size_t>(4);
-    auto off = message.get<off_t>(5);
+    auto ino = message.get_usr_data<fuse_ino_t>(0);
+    auto to_read = message.get_usr_data<size_t>(1);
+    auto off = message.get_usr_data<off_t>(2);
     std::array<char, 1024> buffer;
     LOG_TRACE_L1(logger, "Received read for ino {}, with size {} and offset {}", ino, to_read, off);
     auto response = message.respond();
@@ -127,6 +127,17 @@ MessageReceiver Syscalls::read(MessageReceiver& message) {
             to_read -= file.gcount();
             response.add_raw(buffer.data(), written);
         }
+    }
+
+    return response;
+}
+MessageReceiver Syscalls::open(MessageReceiver& message) {
+    auto ino = message.get_usr_data<fuse_ino_t>(0);
+    auto file_info = message.copy_usr_data<fuse_file_info>(1);
+    auto response = message.respond();
+
+    if (file_info.flags & O_RDONLY) {
+        response.add(&file_info);
     }
 
     return response;
