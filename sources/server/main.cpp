@@ -4,7 +4,6 @@
 
 #include "Server.h"
 
-void print_help() {}
 
 int main(int argc, char* argv[]) {
     argparse::ArgumentParser program("remotefs server");
@@ -40,7 +39,7 @@ int main(int argc, char* argv[]) {
     }
 
     quill::enable_console_colours();
-    quill::start();
+    quill::start(true);
 
     quill::Logger* logger = quill::get_logger();
 
