@@ -17,7 +17,7 @@ namespace remotefs {
 
 class Server {
    public:
-    Server(bool metrics_on_stop = false);
+    explicit Server(bool metrics_on_stop = false);
     void start(const std::string& address);
 
    private:

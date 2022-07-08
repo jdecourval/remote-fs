@@ -22,8 +22,11 @@ MessageReceiver Syscalls::lookup(MessageReceiver& message) {
 
     if (auto entry = inode_cache.lookup((std::filesystem::path{inode_cache.inode_from_ino(ino).first} / path).c_str());
         entry != nullptr) {
-        auto result = fuse_entry_param{
-            .ino = entry->second.st_ino, .generation = 0, .attr = entry->second, .attr_timeout = 1, .entry_timeout = 1};
+        auto result = fuse_entry_param{.ino = entry->second.stat.st_ino,
+                                       .generation = 0,
+                                       .attr = entry->second.stat,
+                                       .attr_timeout = 1,
+                                       .entry_timeout = 1};
         response.add_raw(&result, sizeof(result));
         LOG_TRACE_L1(logger, "stat succeeded for path: {} -> ino: {}", path.data(), result.ino);
     } else {
@@ -38,7 +41,7 @@ MessageReceiver Syscalls::getattr(MessageReceiver& message) {
     auto response = message.respond();
 
     const auto& entry = inode_cache.inode_from_ino(ino);
-    response.add_raw(&entry.second, sizeof(entry.second));
+    response.add_raw(&entry.second.stat, sizeof(entry.second.stat));
     LOG_TRACE_L1(logger, "getattr: ino found in cache{}", ino);
 
     return response;
@@ -60,7 +63,7 @@ MessageReceiver Syscalls::readdir(MessageReceiver& message) {
     if (off == 0) {
         LOG_TRACE_L2(logger, "Adding . to buffer");
         // off must start at 1
-        auto entry_size = fuse_add_direntry(nullptr, buffer.data(), buffer.size(), ".", &root_entry.second, off++);
+        auto entry_size = fuse_add_direntry(nullptr, buffer.data(), buffer.size(), ".", &root_entry.second.stat, off++);
         if ((total_size += entry_size) > size) {
             LOG_TRACE_L1(logger, "readdir responded with {} parts and size {}", off - 2, total_size - entry_size);
             return response;
@@ -117,16 +120,17 @@ MessageReceiver Syscalls::read(MessageReceiver& message) {
     LOG_TRACE_L1(logger, "Received read for ino {}, with size {} and offset {}", ino, to_read, off);
     auto response = message.respond();
 
-    const auto& path = inode_cache.inode_from_ino(ino).first;
-    auto file = std::ifstream(path.data(), std::ios::in | std::ios::binary);
-    if (!file.fail()) {
-        file.seekg(off);
-        while (file && to_read > 0) {
-            file.read(buffer.data(), std::min(buffer.size(), to_read));
-            auto written = file.gcount();
-            to_read -= file.gcount();
-            response.add_raw(buffer.data(), written);
+    auto file_handle = inode_cache.inode_from_ino(ino).second.handle.get();
+    std::fseek(file_handle, off, SEEK_SET);
+
+    while (to_read > 0) {
+        auto read = std::fread(buffer.data(), 1, std::min(buffer.size(), to_read), file_handle);
+        if (read == 0) {
+            break;
         }
+
+        to_read -= read;
+        response.add_raw(buffer.data(), read);
     }
 
     return response;
@@ -136,10 +140,21 @@ MessageReceiver Syscalls::open(MessageReceiver& message) {
     auto file_info = message.copy_usr_data<fuse_file_info>(1);
     auto response = message.respond();
 
-    if (file_info.flags & O_RDONLY) {
+    if (!(file_info.flags & (O_RDWR | O_WRONLY))) {
+        // Only read-only for now
+        auto& inode = inode_cache.inode_from_ino(ino);
+        InodeCache::open(inode);
+
         response.add(&file_info);
     }
 
     return response;
+}
+
+MessageReceiver Syscalls::release(MessageReceiver& message) {
+    auto ino = message.get_usr_data<fuse_ino_t>(0);
+    auto& inode = inode_cache.inode_from_ino(ino);
+    InodeCache::close(inode);
+    return message.respond();
 }
 }  // namespace remotefs

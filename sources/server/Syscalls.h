@@ -18,6 +18,7 @@ class Syscalls {
     MessageReceiver getattr(MessageReceiver& message);
     MessageReceiver readdir(MessageReceiver& message);
     MessageReceiver read(MessageReceiver& message);
+    MessageReceiver release(MessageReceiver& message);
 
    private:
     quill::Logger* logger;

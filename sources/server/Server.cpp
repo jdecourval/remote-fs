@@ -49,6 +49,7 @@ void Server::start(const std::string& address) {
     auto& open_timing = metric_registry.create_histogram("message-received-open");
     auto& read_timing = metric_registry.create_histogram("message-received-read");
     auto& lookup_timing = metric_registry.create_histogram("message-received-lookup");
+    auto& release_timing = metric_registry.create_histogram("message-received-release");
     auto& send_timing = metric_registry.create_histogram("message-sent");
 
     auto monitoring_socket = zmqpp::socket{context, zmqpp::socket_type::pair};
@@ -88,6 +89,10 @@ void Server::start(const std::string& address) {
                 case READ: {
                     auto tracker = read_timing.track_scope();
                     return syscalls.read(message);
+                }
+                case RELEASE: {
+                    auto tracker = release_timing.track_scope();
+                    return syscalls.release(message);
                 }
                     //        case OPENDIR: {
                     //            // Return some number, add the open directory_entry to

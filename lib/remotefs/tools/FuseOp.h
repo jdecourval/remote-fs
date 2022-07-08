@@ -5,7 +5,7 @@
 #include <functional>
 
 namespace remotefs {
-enum FuseOp : uint8_t { LOOKUP, GETATTR, READDIR, OPEN, READ };
+enum FuseOp : uint8_t { LOOKUP, GETATTR, READDIR, OPEN, READ, RELEASE };
 }  // namespace remotefs
 
 #endif  // REMOTEFS_LIB_H_FUSEOP

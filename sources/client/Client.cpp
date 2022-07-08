@@ -47,6 +47,7 @@ Client::Client(int argc, char *argv[])
         .getattr = [](auto... ts) { remotefs::sendcall(FuseOp::GETATTR, ts...); },
         .open = [](auto... ts) { remotefs::sendcall(FuseOp::OPEN, ts...); },
         .read = [](auto... ts) { remotefs::sendcall(FuseOp::READ, ts...); },
+        .release = [](auto... ts) { remotefs::sendcall(FuseOp::RELEASE, ts...); },
         .readdir = [](auto... ts) { remotefs::sendcall(FuseOp::READDIR, ts...); },
     };
 #pragma GCC diagnostic pop
@@ -161,6 +162,15 @@ void Client::start(const std::string &address) {
                     auto result = message.copy_usr_data<fuse_file_info>(0);
                     fuse_reply_open(message.req(), &result);
                 }
+                break;
+
+            case RELEASE:
+                if (message.usr_data_parts() == 0) {
+                    fuse_reply_err(message.req(), 0);
+                } else {
+                    throw std::logic_error("Not implemented");
+                }
+                break;
         }
     });
 
