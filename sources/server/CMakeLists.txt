@@ -7,6 +7,8 @@ add_executable(remote-fs-server
         Server.h
         Syscalls.cpp
         Syscalls.h
+        IoUring.cpp
+        IoUring.h
         )
 
 pkg_check_modules(fuse REQUIRED IMPORTED_TARGET fuse3)
@@ -17,6 +19,7 @@ target_link_libraries(remote-fs-server PUBLIC
         PkgConfig::fuse
         quill::quill
         argparse::argparse
+        PkgConfig::liburing
         )
 
 target_compile_definitions(remote-fs-server PRIVATE

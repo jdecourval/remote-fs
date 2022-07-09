@@ -5,8 +5,9 @@
 
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <ranges>
+
+#include "IoUring.h"
 
 namespace remotefs {
 
@@ -112,29 +113,16 @@ MessageReceiver Syscalls::readdir(MessageReceiver& message) {
     return response;
 }
 
-MessageReceiver Syscalls::read(MessageReceiver& message) {
+void Syscalls::read(MessageReceiver& message, IoUring& uring) {
     auto ino = message.get_usr_data<fuse_ino_t>(0);
     auto to_read = message.get_usr_data<size_t>(1);
     auto off = message.get_usr_data<off_t>(2);
     LOG_TRACE_L1(logger, "Received read for ino {}, with size {} and offset {}", ino, to_read, off);
-    auto response = message.respond();
-
     auto file_handle = inode_cache.inode_from_ino(ino).second.handle.get();
-    std::fseek(file_handle, off, SEEK_SET);
+    auto buffer = new char[sizeof(MessageReceiver) + to_read];
+    auto response = message.respond_new(buffer);
 
-    while (to_read > 0) {
-        auto buffer = std::malloc(to_read);
-        auto read = std::fread(buffer, 1, to_read, file_handle);
-        if (read == 0) {
-            std::free(buffer);
-            break;
-        }
-
-        to_read -= read;
-        response.add_nocopy(buffer, read, [](void* ptr, auto) { std::free(ptr); });
-    }
-
-    return response;
+    uring.queue_read(fileno(file_handle), {buffer + sizeof(MessageReceiver), to_read}, off, response);
 }
 MessageReceiver Syscalls::open(MessageReceiver& message) {
     auto ino = message.get_usr_data<fuse_ino_t>(0);

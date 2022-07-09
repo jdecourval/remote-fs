@@ -143,7 +143,7 @@ void Client::start(const std::string &address) {
                     buffer->off = 0;
 
                     for (auto i = 0u; i < buffer->count; i++) {
-                        buffer->buf[i].mem = &message.get_usr_data<char>(i);
+                        buffer->buf[i].mem = message.raw_usr_data(i);
                         buffer->buf[i].size = message.usr_data_size(i);
                     }
 

@@ -1,5 +1,6 @@
 #include "Server.h"
 
+#include <fuse_lowlevel.h>
 #include <quill/Quill.h>
 
 #include <optional>
@@ -65,9 +66,9 @@ void Server::start(const std::string& address) {
                 return;
             }
 
-            LOG_DEBUG(logger, "Received {}, with {} parts", static_cast<int>(message.op()), message.usr_data_parts());
+        LOG_DEBUG(logger, "Received {}, with {} parts", static_cast<int>(message.op()), message.usr_data_parts());
 
-            auto response = [&]() {
+            auto response = [&]() -> std::optional<MessageReceiver> {
                 switch (message.op()) {
                     case LOOKUP: {
                         auto tracker = lookup_timing.track_scope();
@@ -87,7 +88,8 @@ void Server::start(const std::string& address) {
                     }
                     case READ: {
                         auto tracker = read_timing.track_scope();
-                        return syscalls.read(message);
+                        syscalls.read(message, io_uring);
+                        return {};
                     }
                     case RELEASE: {
                         auto tracker = release_timing.track_scope();
@@ -101,10 +103,24 @@ void Server::start(const std::string& address) {
                         throw std::logic_error("Not implemented");
                 }
             }();
-            {
+
+            if (response) {
                 auto tracker = send_timing.track_scope();
-                socket.send(response);
+                socket.send(response.value());
             }
+        }
+
+        io_uring.submit();
+    });
+
+    reactor.add(io_uring.fd(), [&] {
+        for (auto [size, message_raw] = io_uring.queue_peak(); message_raw != nullptr;
+             std::tie(size, message_raw) = io_uring.queue_peak()) {
+            auto message = reinterpret_cast<MessageReceiver*>(message_raw);
+            message->add_nocopy(
+                reinterpret_cast<char*>(message + 1), size,
+                [](auto, auto ptr) { delete[] reinterpret_cast<char*>(ptr); }, message_raw);
+            socket.send(*message);
         }
     });
 

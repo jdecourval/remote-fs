@@ -69,6 +69,9 @@ class MessageWrappers : public zmqpp::message {
     template <typename... Args>
     MessageWrappers respond(Args&&... args);
 
+    template <typename... Args>
+    MessageWrappers* respond_new(Args&&... args, void* location = nullptr);
+
     void add() {}
 
     template <typename... Args>
@@ -107,6 +110,19 @@ MessageWrappers<1> MessageWrappers<1>::respond(Args&&... args) {
     msg.template add_raw(raw_data(2), size(2));
     if constexpr (sizeof...(args)) {
         msg.template add(std::forward<Args>(args)...);
+    }
+    return msg;
+}
+
+template <>
+template <typename... Args>
+MessageWrappers<1>* MessageWrappers<1>::respond_new(Args&&... args, void* location) {
+    auto msg = location == nullptr ? new MessageWrappers() : new (location) MessageWrappers();
+    msg->template add_raw(raw_data(0), size(0));
+    msg->template add_raw(raw_data(1), size(1));
+    msg->template add_raw(raw_data(2), size(2));
+    if constexpr (sizeof...(args)) {
+        msg->template add(std::forward<Args>(args)...);
     }
     return msg;
 }

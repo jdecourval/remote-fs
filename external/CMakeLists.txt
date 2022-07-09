@@ -1,5 +1,6 @@
 include(IgnoreWarnings)
 include(FetchContent)
+find_package(PkgConfig REQUIRED)
 
 ##------------------------------------------------------------------------------
 ## doctest - The fastest feature-rich C++11/14/17/20 single-header testing framework
@@ -33,7 +34,7 @@ IgnoreWarnings(libzmq)
 FetchContent_Declare(
         zmqpp
         GIT_REPOSITORY https://github.com/jdecourval/zmqpp.git
-        GIT_TAG 76833790033d79a04e74e99f24d2aa236e71a4ad
+        GIT_TAG d9c4a24d8b20b0b4eb495584bfc666b60a26ec71
         UPDATE_DISCONNECTED TRUE
         GIT_SHALLOW TRUE
 )
@@ -71,3 +72,7 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(argparse)
 IgnoreWarnings(argparse)
+
+#------------------------------------------------------------------------------
+#  liburing - io_uring library
+pkg_check_modules(liburing REQUIRED IMPORTED_TARGET GLOBAL liburing)

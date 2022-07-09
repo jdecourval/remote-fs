@@ -9,6 +9,7 @@ class Logger;
 }
 
 namespace remotefs {
+class IoUring;
 
 class Syscalls {
    public:
@@ -17,7 +18,7 @@ class Syscalls {
     MessageReceiver lookup(MessageReceiver& message);
     MessageReceiver getattr(MessageReceiver& message);
     MessageReceiver readdir(MessageReceiver& message);
-    MessageReceiver read(MessageReceiver& message);
+    void read(MessageReceiver& message, IoUring& uring);
     MessageReceiver release(MessageReceiver& message);
 
    private:
