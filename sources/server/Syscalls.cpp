@@ -116,7 +116,6 @@ MessageReceiver Syscalls::read(MessageReceiver& message) {
     auto ino = message.get_usr_data<fuse_ino_t>(0);
     auto to_read = message.get_usr_data<size_t>(1);
     auto off = message.get_usr_data<off_t>(2);
-    std::array<char, 1024> buffer;
     LOG_TRACE_L1(logger, "Received read for ino {}, with size {} and offset {}", ino, to_read, off);
     auto response = message.respond();
 
@@ -124,13 +123,15 @@ MessageReceiver Syscalls::read(MessageReceiver& message) {
     std::fseek(file_handle, off, SEEK_SET);
 
     while (to_read > 0) {
-        auto read = std::fread(buffer.data(), 1, std::min(buffer.size(), to_read), file_handle);
+        auto buffer = std::malloc(to_read);
+        auto read = std::fread(buffer, 1, to_read, file_handle);
         if (read == 0) {
+            std::free(buffer);
             break;
         }
 
         to_read -= read;
-        response.add_raw(buffer.data(), read);
+        response.add_nocopy(buffer, read, [](void* ptr, auto) { std::free(ptr); });
     }
 
     return response;
