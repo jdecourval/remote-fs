@@ -58,53 +58,53 @@ void Server::start(const std::string& address) {
     auto reactor = zmqpp::reactor();
     reactor.add(socket, [&] {
         MessageReceiver message;
-        socket.receive(message);
-
-        if (message.empty()) {
-            loop_breaked.increment();
-            LOG_WARNING(logger, "Received empty message");
-            return;
-        }
-
-        LOG_DEBUG(logger, "Received {}, with {} parts", static_cast<int>(message.op()), message.usr_data_parts());
-
-        auto response = [&]() {
-            switch (message.op()) {
-                case LOOKUP: {
-                    auto tracker = lookup_timing.track_scope();
-                    return syscalls.lookup(message);
-                }
-                case GETATTR: {
-                    auto tracker = getattr_timing.track_scope();
-                    return syscalls.getattr(message);
-                }
-                case READDIR: {
-                    auto tracker = readdir_timing.track_scope();
-                    return syscalls.readdir(message);
-                }
-                case OPEN: {
-                    auto tracker = open_timing.track_scope();
-                    return syscalls.open(message);
-                }
-                case READ: {
-                    auto tracker = read_timing.track_scope();
-                    return syscalls.read(message);
-                }
-                case RELEASE: {
-                    auto tracker = release_timing.track_scope();
-                    return syscalls.release(message);
-                }
-                    //        case OPENDIR: {
-                    //            // Return some number, add the open directory_entry to
-                    //            a cache
-                    //        }
-                default:
-                    throw std::logic_error("Not implemented");
+        while (socket.receive(message, true)) {
+            if (message.empty()) {
+                loop_breaked.increment();
+                LOG_WARNING(logger, "Received empty message");
+                return;
             }
-        }();
-        {
-            auto tracker = send_timing.track_scope();
-            socket.send(response);
+
+            LOG_DEBUG(logger, "Received {}, with {} parts", static_cast<int>(message.op()), message.usr_data_parts());
+
+            auto response = [&]() {
+                switch (message.op()) {
+                    case LOOKUP: {
+                        auto tracker = lookup_timing.track_scope();
+                        return syscalls.lookup(message);
+                    }
+                    case GETATTR: {
+                        auto tracker = getattr_timing.track_scope();
+                        return syscalls.getattr(message);
+                    }
+                    case READDIR: {
+                        auto tracker = readdir_timing.track_scope();
+                        return syscalls.readdir(message);
+                    }
+                    case OPEN: {
+                        auto tracker = open_timing.track_scope();
+                        return syscalls.open(message);
+                    }
+                    case READ: {
+                        auto tracker = read_timing.track_scope();
+                        return syscalls.read(message);
+                    }
+                    case RELEASE: {
+                        auto tracker = release_timing.track_scope();
+                        return syscalls.release(message);
+                    }
+                        //        case OPENDIR: {
+                        //            // Return some number, add the open directory_entry to
+                        //            a cache
+                        //        }
+                    default:
+                        throw std::logic_error("Not implemented");
+                }
+            }();
+            {
+                auto tracker = send_timing.track_scope();
+                socket.send(response);
+            }
         }
     });
 
