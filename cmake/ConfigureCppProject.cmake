@@ -33,19 +33,8 @@ if (NOT FIRST_TIME_SETUP_EXECUTED)
         set(IWYU_AVAILABLE True CACHE INTERNAL "")
     endif ()
 
-    if (${DEBUG} AND (${MOLD_AVAILABLE} MATCHES mold))
-        set(DEFAULT_LINKER mold CACHE STRING "Default linker")
-    elseif (LLD_AVAILABLE)
-        set(DEFAULT_LINKER lld CACHE STRING "Default linker")
-    elseif (GOLD_AVAILABLE)
-        set(DEFAULT_LINKER gold CACHE STRING "Default linker")
-    else ()
-        set(DEFAULT_LINKER default CACHE STRING "Default linker")
-    endif ()
 
-    set_property(CACHE DEFAULT_LINKER PROPERTY STRINGS ${MOLD_AVAILABLE} ${LLD_AVAILABLE} ${GOLD_AVAILABLE} ${BFD_AVAILABLE} default)
-
-    option(DEFAULT_LTO "Default LTO behaviour" OFF)
+    option(DEFAULT_LTO "Default LTO behaviour" ${RELEASE})
     option(DEFAULT_CCACHE "Default ccache behaviour" ${CCACHE_AVAILABLE})
     option(DEFAULT_IWYU "Default IWYU behaviour" ${IWYU_AVAILABLE})
     option(DEFAULT_TIDY "Default clang-tidy behaviour" OFF)
@@ -57,6 +46,21 @@ if (NOT FIRST_TIME_SETUP_EXECUTED)
     option(DEFAULT_TSAN "Default thread sanitizer behaviour" OFF)
     option(DEFAULT_VALGRIND "Default valgrind target generation" ${VALGRIND_AVAILABLE})
     option(DEFAULT_COLOR "Always produce ANSI-colored output (GNU/Clang only)." ON)
+
+    if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" AND ${DEFAULT_LTO})
+        # It appears that GCC's LTO can have problems with some linkers.
+        set(DEFAULT_LINKER default CACHE STRING "Default linker")
+    elseif (${DEBUG} AND (${MOLD_AVAILABLE} MATCHES mold))
+        set(DEFAULT_LINKER mold CACHE STRING "Default linker")
+    elseif (LLD_AVAILABLE)
+        set(DEFAULT_LINKER lld CACHE STRING "Default linker")
+    elseif (GOLD_AVAILABLE)
+        set(DEFAULT_LINKER gold CACHE STRING "Default linker")
+    else ()
+        set(DEFAULT_LINKER default CACHE STRING "Default linker")
+    endif ()
+
+    set_property(CACHE DEFAULT_LINKER PROPERTY STRINGS ${MOLD_AVAILABLE} ${LLD_AVAILABLE} ${GOLD_AVAILABLE} ${BFD_AVAILABLE} default)
 
     # Be nice to visual studio
     set_property(GLOBAL PROPERTY USE_FOLDERS ON)
