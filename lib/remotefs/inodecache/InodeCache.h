@@ -4,8 +4,6 @@
 #include <sys/stat.h>
 
 #include <cassert>
-#include <fstream>
-#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -14,24 +12,32 @@ namespace remotefs {
 
 class InodeCache {
    public:
-    struct CacheValue {
-        CacheValue(struct stat&& s)
-            : stat(std::move(s)),
-              handle{nullptr, &std::fclose} {}
+    class InodeValue {
+        using FileDescriptor = int;
+        static const FileDescriptor unassigned = -1;
+
+       public:
+        explicit InodeValue(const struct stat& s);
+        ~InodeValue() noexcept;
+        void open(std::string_view path);
+        void close();
+        [[nodiscard]] bool is_open() const;
+        [[nodiscard]] FileDescriptor handle() const;
 
         struct stat stat;
-        std::unique_ptr<std::FILE, decltype(&std::fclose)> handle;
+
+       private:
+        FileDescriptor _handle;
     };
-    using CacheType = std::unordered_map<std::string, CacheValue>;
+
+    using CacheType = std::unordered_map<std::string, InodeValue>;
     using Inode = CacheType::value_type;
     using fuse_ino_t = std::uint64_t;
 
-    InodeCache()
-        : root{*lookup(".")} {
-        root.second.stat.st_ino = 1;
-    }
-
+    InodeCache();
     Inode* lookup(std::string path);
+    static void open(Inode& inode);
+    static void close(Inode& inode);
 
     [[nodiscard]] inline const Inode& inode_from_ino(fuse_ino_t ino) const {
         if (ino == 1) {
@@ -49,22 +55,13 @@ class InodeCache {
         return *reinterpret_cast<Inode*>(ino);
     }
 
-    static void open(Inode& inode) {
-        inode.second.handle.reset(std::fopen(inode.first.c_str(), "rb"));
-    }
-
-    static void close(Inode& inode) {
-        inode.second.handle.reset();
-    }
-
    private:
     template <typename... Ts>
     Inode& create_inode(Ts&&... params) {
-        auto pair = cache.emplace(std::forward<Ts>(params)...);
-        assert(pair.second);
-        auto& inode = pair.first;
-        inode->second.stat.st_ino = reinterpret_cast<fuse_ino_t>(&*inode);
-        return *inode;
+        auto [inode_iter, inserted] = cache.emplace(std::forward<Ts>(params)...);
+        assert(inserted);
+        inode_iter->second.stat.st_ino = reinterpret_cast<fuse_ino_t>(&*inode_iter);
+        return *inode_iter;
     }
 
     CacheType cache;

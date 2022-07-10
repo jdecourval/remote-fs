@@ -13,7 +13,7 @@ class IoUring;
 
 class Syscalls {
    public:
-    Syscalls() noexcept;
+    Syscalls();
     MessageReceiver open(MessageReceiver& message);
     MessageReceiver lookup(MessageReceiver& message);
     MessageReceiver getattr(MessageReceiver& message);

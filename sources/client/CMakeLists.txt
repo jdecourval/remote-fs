@@ -2,7 +2,7 @@ include(ConfigureCppProject)
 include(FindPkgConfig)
 
 add_executable(remote-fs-client
-        main.cpp
+        Main.cpp
         Client.cpp
         Client.h
         FuseCmdlineOptsWrapper.cpp

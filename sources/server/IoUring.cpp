@@ -16,16 +16,16 @@ IoUring::~IoUring() {
 }
 
 void IoUring::queue_read(int fd, std::span<char> buffer, std::size_t offset, void* user_data) {
-    if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) {
+    if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
         io_uring_prep_read(sqe, fd, buffer.data(), buffer.size(), offset);
         io_uring_sqe_set_data(sqe, user_data);
     }
 }
 
-std::pair<size_t, void*> IoUring::queue_peak() {
+std::pair<size_t, void*> IoUring::queue_peek() {
     struct io_uring_cqe* cqe;
-    if (auto ret = io_uring_peek_cqe(&ring, &cqe); ret == 0) {
-        if (cqe->res > 0) {
+    if (auto ret = io_uring_peek_cqe(&ring, &cqe); ret == 0) [[likely]] {
+        if (cqe->res >= 0) [[likely]] {
             io_uring_cqe_seen(&ring, cqe);
             return {cqe->res, io_uring_cqe_get_data(cqe)};
         } else if (cqe->res == -EAGAIN) {

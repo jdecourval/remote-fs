@@ -66,7 +66,7 @@ void Server::start(const std::string& address) {
                 return;
             }
 
-        LOG_DEBUG(logger, "Received {}, with {} parts", static_cast<int>(message.op()), message.usr_data_parts());
+            LOG_DEBUG(logger, "Received {}, with {} parts", static_cast<int>(message.op()), message.usr_data_parts());
 
             auto response = [&]() -> std::optional<MessageReceiver> {
                 switch (message.op()) {
@@ -114,13 +114,14 @@ void Server::start(const std::string& address) {
     });
 
     reactor.add(io_uring.fd(), [&] {
-        for (auto [size, message_raw] = io_uring.queue_peak(); message_raw != nullptr;
-             std::tie(size, message_raw) = io_uring.queue_peak()) {
-            auto message = reinterpret_cast<MessageReceiver*>(message_raw);
-            message->add_nocopy(
-                reinterpret_cast<char*>(message + 1), size,
-                [](auto, auto ptr) { delete[] reinterpret_cast<char*>(ptr); }, message_raw);
-            socket.send(*message);
+        for (auto [size, message_raw] = io_uring.queue_peek(); message_raw != nullptr;
+             std::tie(size, message_raw) = io_uring.queue_peek()) {
+            auto response = reinterpret_cast<MessageReceiver*>(message_raw);
+            auto buffer = reinterpret_cast<char*>(response + 1);
+
+            response->add_nocopy(
+                buffer, size, [](auto, auto ptr) { delete[] static_cast<char*>(ptr); }, message_raw);
+            socket.send(*response);
         }
     });
 
@@ -139,9 +140,9 @@ void Server::start(const std::string& address) {
             uint32_t value;
         };
 
-        auto event = reinterpret_cast<const struct event*>(message.raw_data(0));
         LOG_DEBUG(logger, "Received event message, with {} parts, event number={}, event value={}, address={}",
-                  message.parts(), event->number, event->value, message.get(1));
+                  message.parts(), reinterpret_cast<const struct event*>(message.raw_data(0))->number,
+                  reinterpret_cast<const struct event*>(message.raw_data(0))->value, message.get(1));
     });
 
     while (true) {
@@ -166,4 +167,5 @@ void Server::start(const std::string& address) {
         std::cerr << metric_registry << std::flush;
     }
 }
+
 }  // namespace remotefs

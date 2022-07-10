@@ -1,9 +1,6 @@
-include(addClangFormat)
 include(clangTidy)
 include(CheckIPOSupported)
 include(SetLinker)
-
-find_package(clangformat)
 
 find_program(IWYU_PATH NAMES include-what-you-use iwyu)
 
@@ -36,10 +33,6 @@ if (NOT FIRST_TIME_SETUP_EXECUTED)
         set(IWYU_AVAILABLE True CACHE INTERNAL "")
     endif ()
 
-    if (CLANG_FORMAT_BIN)
-        set(FORMAT_AVAILABLE True CACHE INTERNAL "")
-    endif ()
-
     if (${DEBUG} AND (${MOLD_AVAILABLE} MATCHES mold))
         set(DEFAULT_LINKER mold CACHE STRING "Default linker")
     elseif (LLD_AVAILABLE)
@@ -56,8 +49,6 @@ if (NOT FIRST_TIME_SETUP_EXECUTED)
     option(DEFAULT_CCACHE "Default ccache behaviour" ${CCACHE_AVAILABLE})
     option(DEFAULT_IWYU "Default IWYU behaviour" ${IWYU_AVAILABLE})
     option(DEFAULT_TIDY "Default clang-tidy behaviour" OFF)
-    option(DEFAULT_FORMAT_AT_COMPILE "Default clang-format behaviour at compile time" OFF)
-    option(DEFAULT_FORMAT_AT_COMMIT "Default clang-format behaviour at commit time" ${FORMAT_AVAILABLE})
     option(DEFAULT_PERFORMANCE "Default performance flags behaviour" ${RELEASE})
     option(DEFAULT_SECURITY "Default security flags behaviour" ON)
     option(DEFAULT_WARNINGS "Default warnings behaviour" ON)
@@ -78,12 +69,6 @@ if (NOT FIRST_TIME_SETUP_EXECUTED)
     option(MEASURE_ALL "When enabled all commands will be passed through time command" OFF)
     if (MEASURE_ALL)
         set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "time")
-    endif ()
-
-    find_program(BASH_PROGRAM bash)
-    if (BASH_PROGRAM AND DEFAULT_FORMAT_AT_COMMIT AND NOT EXISTS "${CMAKE_SOURCE_DIR}/.git/hooks/pre-commit")
-        message(STATUS "Installing git hooks")
-        file(COPY ${CMAKE_SOURCE_DIR}/pre-commit DESTINATION "${CMAKE_SOURCE_DIR}/.git/hooks")
     endif ()
 
     # Disable CDash integration by default
@@ -162,7 +147,7 @@ function(add_warnings TARGET)
                 "-Wnull-dereference"        # Warn of undefined behaviors due to dereferencing a null pointer.
                 "-Wmissing-include-dirs"    # Warn about missing user-supplied include directories.
                 "-Wuninitialized"           # Warn if an automatic variable is used without first being initialized. Also warn if a non-static reference or non-static const member appears in a class without constructors.
-                "-Wstrict-overflow=5"       # Warn about cases where the compiler optimizes based on the assumption that signed overflow does not occur.
+                "-Wstrict-overflow"         # Warn about cases where the compiler optimizes based on the assumption that signed overflow does not occur.
                 "-Wundef"                   # Warn if an undefined identifier is evaluated in an #if directive.
                 "-Wcast-align"              # Warn whenever a pointer is cast such that the required alignment of the target is increased.
                 "-Wredundant-decls"         # Warn if anything is declared more than once in the same scope.
@@ -295,11 +280,6 @@ macro(configure_cpp_project_helper TARGET)
         message(STATUS "Clang-tidy activated for ${TARGET}")
     endif ()
 
-    if (${TARGET}_FORMAT_AT_COMPILE)
-        add_clangformat(${TARGET})
-        message(STATUS "Clang-format at compile time activated for ${TARGET}")
-    endif ()
-
     if (${TARGET}_WARNINGS)
         add_warnings(${TARGET})
         message(STATUS "Extensive warnings activated for ${TARGET}")
@@ -341,7 +321,6 @@ function(configure_cpp_project TARGET)
     option(${TARGET}_CCACHE "Override default ccache behaviour (${DEFAULT_CCACHE}) for project ${TARGET}" ${DEFAULT_CCACHE})
     option(${TARGET}_IWYU "Override default IWYU behaviour (${DEFAULT_IWYU}) for project ${TARGET}" ${DEFAULT_IWYU})
     option(${TARGET}_TIDY "Override default clang-tidy behaviour (${DEFAULT_TIDY}) for project ${TARGET}" ${DEFAULT_TIDY})
-    option(${TARGET}_FORMAT_AT_COMPILE "Override default clang-format behaviour at compile time (${DEFAULT_FORMAT}) for project ${TARGET}" ${DEFAULT_FORMAT_AT_COMPILE})
     option(${TARGET}_WARNINGS "Override default warnings behaviour (${DEFAULT_WARNINGS}) for project ${TARGET}" ${DEFAULT_WARNINGS})
     option(${TARGET}_SECURITY "Override security flags behaviour (${DEFAULT_SECURITY}) for project ${TARGET}" ${DEFAULT_SECURITY})
     option(${TARGET}_WERROR "Override default warnings as error behaviour (${DEFAULT_WERROR}) for project ${TARGET}" ${DEFAULT_WERROR})

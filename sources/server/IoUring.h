@@ -14,7 +14,7 @@ class IoUring {
     IoUring();
     ~IoUring();
     void queue_read(int fd, std::span<char> buffer, std::size_t offset, void* user_data);
-    std::pair<size_t, void*> queue_peak();
+    std::pair<size_t, void*> queue_peek();
     void submit();
     [[nodiscard]] int fd() const;
 

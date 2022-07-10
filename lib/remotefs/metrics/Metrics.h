@@ -34,7 +34,7 @@ class MetricRegistry {
         std::string _name;
     };
 
-    class Counter : public Metric {
+    class Counter final : public Metric {
        public:
         using Metric::Metric;
         Counter(const Counter&) = delete;
@@ -47,7 +47,7 @@ class MetricRegistry {
         long value = 0;
     };
 
-    class Histogram : public Metric {
+    class Histogram final : public Metric {
        public:
         using Clock = std::chrono::high_resolution_clock;
         using Duration = std::chrono::duration<int64_t, std::nano>;

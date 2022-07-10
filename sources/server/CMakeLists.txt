@@ -2,7 +2,7 @@ include(ConfigureCppProject)
 include(FindPkgConfig)
 
 add_executable(remote-fs-server
-        main.cpp
+        Main.cpp
         Server.cpp
         Server.h
         Syscalls.cpp

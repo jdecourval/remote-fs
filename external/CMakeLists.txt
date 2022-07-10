@@ -42,7 +42,7 @@ FetchContent_Declare(
 set(ZMQPP_LIBZMQ_CMAKE ON CACHE BOOL "")
 set(IS_TRAVIS_CI_BUILD OFF CACHE BOOL "")
 FetchContent_MakeAvailable(zmqpp)
-target_include_directories(zmqpp PUBLIC ${zmqpp_SOURCE_DIR}/src)
+target_include_directories(zmqpp SYSTEM PUBLIC ${zmqpp_SOURCE_DIR}/src)
 IgnoreWarnings(zmqpp)
 
 #------------------------------------------------------------------------------

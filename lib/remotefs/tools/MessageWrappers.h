@@ -11,16 +11,14 @@ class fuse_req;
 using fuse_req_t = fuse_req*;
 
 namespace remotefs {
-/// Includes the route
+
 template <int read_offset = 0>
 class MessageWrappers : public zmqpp::message {
    public:
-    using zmqpp::message::message;
-
-    template <typename T, typename... Args>
-    MessageWrappers(T const& part, Args&&... args)
+    template <typename... Args>
+    explicit MessageWrappers(Args&&... args)
         : message() {
-        add(part, std::forward<Args>(args)...);
+        add(std::forward<Args>(args)...);
     }
 
     template <typename T>
@@ -30,7 +28,7 @@ class MessageWrappers : public zmqpp::message {
     }
 
     template <typename T>
-    T copy_usr_data(size_t user_data_idx) {
+    T copy_usr_data(size_t user_data_idx) const {
         assert(sizeof(T) == size(user_data_idx + read_offset + 2));
         T data;
         std::memcpy(&data, raw_data(user_data_idx + read_offset + 2), size(user_data_idx + read_offset + 2));
@@ -46,11 +44,11 @@ class MessageWrappers : public zmqpp::message {
                 size(user_data_idx + read_offset + 2)};
     }
 
-    FuseOp op() {
+    [[nodiscard]] FuseOp op() const {
         return static_cast<FuseOp>(get<std::underlying_type_t<FuseOp>>(read_offset));
     }
 
-    [[nodiscard]] fuse_req_t req() {
+    [[nodiscard]] fuse_req_t req() const {
         return reinterpret_cast<fuse_req_t>(get<uint64_t>(read_offset + 1));
     }
 
@@ -67,10 +65,10 @@ class MessageWrappers : public zmqpp::message {
     }
 
     template <typename... Args>
-    MessageWrappers respond(Args&&... args);
+    MessageWrappers respond(Args&&... args) const;
 
     template <typename... Args>
-    MessageWrappers* respond_new(Args&&... args, void* location = nullptr);
+    MessageWrappers* respond_new(Args&&... args, void* location = nullptr) const;
 
     void add() {}
 
@@ -82,16 +80,22 @@ class MessageWrappers : public zmqpp::message {
 
     template <typename T, typename... Args>
     void add(T* data, Args&&... args) {
-        if (data != nullptr) add_raw(data, sizeof(*data));
+        if (data != nullptr) [[likely]] {
+            add_raw(data, sizeof(*data));
+        }
+
         add(std::forward<Args>(args)...);
     }
 
+#pragma clang diagnostic push
+#pragma ide diagnostic ignored "HidingNonVirtualFunction"
     template <typename T, typename... Args>
     void add(T const& part, Args&&... args) {
         static_assert(!std::is_pointer_v<T>);
         *this << part;
         add(std::forward<Args>(args)...);
     }
+#pragma clang diagnostic pop
 
    private:
     using zmqpp::message::add;
@@ -103,7 +107,7 @@ class MessageWrappers : public zmqpp::message {
 
 template <>
 template <typename... Args>
-MessageWrappers<1> MessageWrappers<1>::respond(Args&&... args) {
+MessageWrappers<1> MessageWrappers<1>::respond(Args&&... args) const {
     auto msg = MessageWrappers();
     msg.template add_raw(raw_data(0), size(0));
     msg.template add_raw(raw_data(1), size(1));
@@ -116,7 +120,7 @@ MessageWrappers<1> MessageWrappers<1>::respond(Args&&... args) {
 
 template <>
 template <typename... Args>
-MessageWrappers<1>* MessageWrappers<1>::respond_new(Args&&... args, void* location) {
+MessageWrappers<1>* MessageWrappers<1>::respond_new(Args&&... args, void* location) const {
     auto msg = location == nullptr ? new MessageWrappers() : new (location) MessageWrappers();
     msg->template add_raw(raw_data(0), size(0));
     msg->template add_raw(raw_data(1), size(1));

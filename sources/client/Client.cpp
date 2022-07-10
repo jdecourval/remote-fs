@@ -7,10 +7,9 @@
 #include <zmqpp/reactor.hpp>
 #include <zmqpp/socket.hpp>
 
+#include "Config.h"
 #include "FuseBufVec.h"
 #include "FuseCmdlineOptsWrapper.h"
-#include "config.h"
-#include "remotefs/tools/FuseOp.h"
 #include "remotefs/tools/MessageWrappers.h"
 
 namespace remotefs {
