@@ -6,6 +6,14 @@
 #include <system_error>
 
 namespace remotefs {
+const InodeCache::Inode* InodeCache::find(const std::string& path) const {
+    if (auto found = cache.find(path); found != cache.end()) {
+        return &*(found);
+    }
+
+    return nullptr;
+}
+
 InodeCache::Inode* InodeCache::lookup(std::string path) {
     using Stat = struct stat;
 

@@ -2,6 +2,7 @@
 
 #include <fuse_lowlevel.h>
 #include <quill/Quill.h>
+#include <sys/stat.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -9,29 +10,80 @@
 #include "IoUring.h"
 
 namespace remotefs {
+namespace {
+struct stat statx_to_stat(const struct statx input) {
+    using Stat = struct stat;
+    return Stat{.st_dev = makedev(input.stx_dev_major, input.stx_dev_minor),
+                .st_ino = input.stx_ino,
+                .st_nlink = input.stx_nlink,
+                .st_mode = input.stx_mode,
+                .st_uid = input.stx_uid,
+                .st_gid = input.stx_gid,
+                .st_rdev = makedev(input.stx_rdev_major, input.stx_rdev_minor),
+                .st_size = static_cast<__off_t>(input.stx_size),
+                .st_blksize = input.stx_blksize,
+                .st_blocks = static_cast<__blkcnt_t>(input.stx_blocks),
+                .st_atim = {input.stx_atime.tv_sec, input.stx_atime.tv_nsec},
+                .st_mtim = {input.stx_mtime.tv_sec, input.stx_mtime.tv_nsec},
+                .st_ctim = {input.stx_ctime.tv_sec, input.stx_ctime.tv_nsec}};
+}
+
+struct UserCb {
+    MessageReceiver msg;
+    InodeCache& inode_cache;
+};
+
+auto lookup_cb = [](int32_t syscall_ret, IoUring<MessageReceiver>::CallbackErased* ptr) -> MessageReceiver&& {
+    auto cb = dynamic_cast<IoUring<MessageReceiver>::CallbackStatic<UserCb, struct statx>*>(ptr);
+    auto& [captured, inode_cache] = cb->user_data;
+    LOG_TRACE_L1(quill::get_logger(), "In intermediary callback, ret={}, path={}", syscall_ret, cb->path.data());
+    if (syscall_ret >= 0) [[likely]] {
+    } else if (syscall_ret == -EAGAIN) {
+        return std::move(captured);
+    } else {
+        throw std::system_error(-syscall_ret, std::generic_category(), "Read result");
+    }
+
+    auto& statx = cb->buffer;
+    auto stat = statx_to_stat(statx);
+    LOG_TRACE_L1(quill::get_logger(), "In intermediary callback success, uid={}, size={}", stat.st_uid, stat.st_size);
+
+    auto fuse_entry =
+        fuse_entry_param{.ino = reinterpret_cast<fuse_ino_t>(&inode_cache.create_inode(std::move(cb->path), stat)),
+                         .generation = 0,
+                         .attr = stat,
+                         .attr_timeout = 1,
+                         .entry_timeout = 1};
+    captured.add(&fuse_entry);
+    return std::move(captured);
+};
+}  // namespace
 
 Syscalls::Syscalls()
     : logger{quill::get_logger()} {}
 
-MessageReceiver Syscalls::lookup(MessageReceiver& message) {
+std::optional<MessageReceiver> Syscalls::lookup(MessageReceiver& message, Syscalls::IoUringImpl& uring) {
     auto ino = message.get_usr_data<fuse_ino_t>(0);
     auto relative_path = message.get_usr_data_string(1);
-    auto response = message.respond();
-    auto path = std::filesystem::path{inode_cache.inode_from_ino(ino).first} / relative_path;
+    auto root_path = std::filesystem::path{inode_cache.inode_from_ino(ino).first};
+    auto path = root_path / relative_path;
+    LOG_DEBUG(logger, "Looking up path={}, relative={}, root={}", path.string(), relative_path, root_path);
 
-    if (auto entry = inode_cache.lookup(path); entry != nullptr) {
-        auto result = fuse_entry_param{.ino = entry->second.stat.st_ino,
-                                       .generation = 0,
-                                       .attr = entry->second.stat,
-                                       .attr_timeout = 1,
-                                       .entry_timeout = 1};
-        response.add_raw(&result, sizeof(result));
-        LOG_TRACE_L1(logger, "stat succeeded for path: {} -> ino: {}", path.c_str(), result.ino);
-    } else {
-        LOG_TRACE_L1(logger, "stat failed for path: {}: {}", path, std::strerror(errno));
+    auto found = inode_cache.find(path);
+    if (found) {
+        auto response = message.respond();
+        auto fuse_entry = fuse_entry_param{.ino = found->second.stat.st_ino,
+                                           .generation = 0,
+                                           .attr = found->second.stat,
+                                           .attr_timeout = 1,
+                                           .entry_timeout = 1};
+        response.add(&fuse_entry);
+        return response;
     }
 
-    return response;
+    uring.queue_statx<UserCb>(AT_FDCWD, path, lookup_cb, message.respond(), inode_cache);
+
+    return {};
 }
 
 MessageReceiver Syscalls::getattr(MessageReceiver& message) {
@@ -110,16 +162,35 @@ MessageReceiver Syscalls::readdir(MessageReceiver& message) {
     return response;
 }
 
-void Syscalls::read(MessageReceiver& message, IoUring& uring) {
+struct Callback {
+    size_t size;
+    MessageReceiver message;
+};
+
+auto read_callback = [](int32_t syscall_ret, IoUring<MessageReceiver>::CallbackErased* ptr) -> MessageReceiver&& {
+    auto& callback = *dynamic_cast<IoUring<MessageReceiver>::CallbackFam<Callback>*>(ptr);
+    if (syscall_ret >= 0) [[likely]] {
+        callback.user_data.message.add_nocopy(
+            callback.user_buffer, callback.user_data.size, [](auto, auto p) { ::operator delete(p); },
+            reinterpret_cast<void*>(ptr));
+        return std::move(callback.user_data.message);
+    } else if (syscall_ret == -EAGAIN) {
+        return std::move(callback.user_data.message);
+    } else {
+        throw std::system_error(-syscall_ret, std::generic_category(), "Read result");
+    }
+};
+void Syscalls::read(MessageReceiver& message, Syscalls::IoUringImpl& uring) {
     auto ino = message.get_usr_data<fuse_ino_t>(0);
     auto to_read = message.get_usr_data<size_t>(1);
     auto off = message.get_usr_data<off_t>(2);
     LOG_TRACE_L1(logger, "Received read for ino {}, with size {} and offset {}", ino, to_read, off);
     auto file_handle = inode_cache.inode_from_ino(ino).second.handle();
-    auto buffer = new char[sizeof(MessageReceiver) + to_read];
-    auto response = message.respond_new(buffer);
+    // TODO: Test two modes of allocation:
+    //  1. Always allocate a pagesize: Wasteful for small files
+    //  2. Dynamic, minimally sized
 
-    uring.queue_read(file_handle, {buffer + sizeof(MessageReceiver), to_read}, off, response);
+    uring.queue_read<Callback>(file_handle, to_read, off, read_callback, to_read, message.respond());
 }
 
 MessageReceiver Syscalls::open(MessageReceiver& message) {

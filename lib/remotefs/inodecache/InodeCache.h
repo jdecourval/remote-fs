@@ -35,6 +35,7 @@ class InodeCache {
     using fuse_ino_t = std::uint64_t;
 
     InodeCache();
+    const Inode* find(const std::string& path) const;
     Inode* lookup(std::string path);
     static void open(Inode& inode);
     static void close(Inode& inode);
@@ -55,15 +56,15 @@ class InodeCache {
         return *reinterpret_cast<Inode*>(ino);
     }
 
-   private:
+    // TODO: Make private again
     template <typename... Ts>
     Inode& create_inode(Ts&&... params) {
         auto [inode_iter, inserted] = cache.emplace(std::forward<Ts>(params)...);
-        assert(inserted);
         inode_iter->second.stat.st_ino = reinterpret_cast<fuse_ino_t>(&*inode_iter);
         return *inode_iter;
     }
 
+   private:
     CacheType cache;
     Inode& root;
 };

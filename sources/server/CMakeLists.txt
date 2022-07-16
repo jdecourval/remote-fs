@@ -7,7 +7,6 @@ add_executable(remote-fs-server
         Server.h
         Syscalls.cpp
         Syscalls.h
-        IoUring.cpp
         IoUring.h
         )
 

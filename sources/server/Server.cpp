@@ -72,7 +72,7 @@ void Server::start(const std::string& address) {
                 switch (message.op()) {
                     case LOOKUP: {
                         auto tracker = lookup_timing.track_scope();
-                        return syscalls.lookup(message);
+                        return syscalls.lookup(message, io_uring);
                     }
                     case GETATTR: {
                         auto tracker = getattr_timing.track_scope();
@@ -114,14 +114,10 @@ void Server::start(const std::string& address) {
     });
 
     reactor.add(io_uring.fd(), [&] {
-        for (auto [size, message_raw] = io_uring.queue_peek(); message_raw != nullptr;
-             std::tie(size, message_raw) = io_uring.queue_peek()) {
-            auto response = reinterpret_cast<MessageReceiver*>(message_raw);
-            auto buffer = reinterpret_cast<char*>(response + 1);
-
-            response->add_nocopy(
-                buffer, size, [](auto, auto ptr) { delete[] static_cast<char*>(ptr); }, message_raw);
-            socket.send(*response);
+        for (auto [ret, cb] = io_uring.queue_peek(); cb; std::tie(ret, cb) = io_uring.queue_peek()) {
+            LOG_TRACE_L1(logger, "In last callback, ret={}, cb={}", ret, reinterpret_cast<uint64_t>(cb.get()));
+            auto&& response = cb->callback(ret, cb.get());
+            socket.send(response);
         }
     });
 
@@ -140,9 +136,10 @@ void Server::start(const std::string& address) {
             uint32_t value;
         };
 
-        LOG_DEBUG(logger, "Received event message, with {} parts, event number={}, event value={}, address={}",
-                  message.parts(), reinterpret_cast<const struct event*>(message.raw_data(0))->number,
-                  reinterpret_cast<const struct event*>(message.raw_data(0))->value, message.get(1));
+        //        LOG_DEBUG(logger, "Received event message, with {} parts, event number={}, event value={},
+        //        address={}",
+        //                  message.parts(), reinterpret_cast<const struct event*>(message.raw_data(0))->number,
+        //                  reinterpret_cast<const struct event*>(message.raw_data(0))->value, message.get(1));
     });
 
     while (true) {

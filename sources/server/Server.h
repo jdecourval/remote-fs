@@ -27,7 +27,7 @@ class Server {
     quill::Logger* logger;
     MetricRegistry<settings::DISABLE_METRICS> metric_registry;
     Syscalls syscalls;
-    IoUring io_uring;
+    IoUring<MessageReceiver> io_uring;
     bool _metrics_on_stop;
 };
 
