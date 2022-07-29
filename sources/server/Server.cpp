@@ -1,10 +1,12 @@
 #include "Server.h"
 
-#include <fuse_lowlevel.h>
+#include <netdb.h>
 #include <quill/Quill.h>
 
+#include <memory>
 #include <optional>
-#include <zmqpp/reactor.hpp>
+
+#include "remotefs/tools/FuseOp.h"
 
 namespace remotefs {
 
@@ -26,23 +28,50 @@ void signal_term_handler(int signal) {
 }
 
 Server::Server(bool metrics_on_stop)
-    : context{},
-      socket{context, zmqpp::socket_type::xreply},
-      logger{quill::get_logger()},
+    : logger{quill::get_logger()},
       metric_registry{},
-      syscalls{},
+      syscalls{io_uring},
       _metrics_on_stop{metrics_on_stop} {
     std::signal(SIGUSR1, signal_usr1_handler);
     std::signal(SIGTERM, signal_term_handler);
-    socket.monitor("inproc://monitor", zmqpp::event::accepted | zmqpp::event::closed | zmqpp::event::disconnected);
 }
 
 void Server::start(const std::string& address) {
-#ifndef NDEBUG
-    socket.set(zmqpp::socket_option::router_mandatory, true);
-#endif
+    class GetAddrInfoErrorCategory : public std::error_category {
+        const char* name() const noexcept override {
+            return "getaddrinfo";
+        }
+        std::string message(int i) const override {
+            return gai_strerror(i);
+        }
+    };
+
     LOG_INFO(logger, "Binding to {}", address);
-    socket.bind(address);
+    struct addrinfo hosthints {
+        .ai_flags = AI_PASSIVE, .ai_family = AF_INET, .ai_socktype = SOCK_DCCP, .ai_protocol = IPPROTO_DCCP
+    };
+    struct addrinfo* hostinfo;  // TODO: unique_ptr with freeaddrinfo
+    if (auto ret = getaddrinfo(address.c_str(), "5001", &hosthints, &hostinfo); ret < 0) {
+        throw std::system_error(ret, GetAddrInfoErrorCategory(), "Failed to resolve address");
+    }
+
+    socket = ::socket(hostinfo->ai_family, hostinfo->ai_socktype, hostinfo->ai_protocol);
+    if (socket < 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to configure socket");
+    }
+
+    const auto enable = 1;
+    if (setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
+        throw std::system_error(errno, std::system_category(), "Failed to set REUSEADDR");
+
+    if (::bind(socket, hostinfo->ai_addr, hostinfo->ai_addrlen) < 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to bind socket");
+    }
+
+    if (::listen(socket, 10) < 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to listen to socket");
+    }
+
     auto& loop_breaked = metric_registry.create_counter("loop-break");
     auto& wait_time = metric_registry.create_histogram("message-received");
     auto& getattr_timing = metric_registry.create_histogram("message-received-getattr");
@@ -53,99 +82,71 @@ void Server::start(const std::string& address) {
     auto& release_timing = metric_registry.create_histogram("message-received-release");
     auto& send_timing = metric_registry.create_histogram("message-sent");
 
-    auto monitoring_socket = zmqpp::socket{context, zmqpp::socket_type::pair};
-    monitoring_socket.connect("inproc://monitor");
-
-    auto reactor = zmqpp::reactor();
-    reactor.add(socket, [&] {
-        MessageReceiver message;
-        while (socket.receive(message, true)) {
-            if (message.empty()) {
-                loop_breaked.increment();
-                LOG_WARNING(logger, "Received empty message");
-                return;
-            }
-
-            LOG_DEBUG(logger, "Received {}, with {} parts", static_cast<int>(message.op()), message.usr_data_parts());
-
-            auto response = [&]() -> std::optional<MessageReceiver> {
-                switch (message.op()) {
-                    case LOOKUP: {
-                        auto tracker = lookup_timing.track_scope();
-                        return syscalls.lookup(message, io_uring);
-                    }
-                    case GETATTR: {
-                        auto tracker = getattr_timing.track_scope();
-                        return syscalls.getattr(message);
-                    }
-                    case READDIR: {
-                        auto tracker = readdir_timing.track_scope();
-                        return syscalls.readdir(message);
-                    }
-                    case OPEN: {
-                        auto tracker = open_timing.track_scope();
-                        return syscalls.open(message);
-                    }
-                    case READ: {
-                        auto tracker = read_timing.track_scope();
-                        syscalls.read(message, io_uring);
-                        return {};
-                    }
-                    case RELEASE: {
-                        auto tracker = release_timing.track_scope();
-                        return syscalls.release(message);
-                    }
-                        //        case OPENDIR: {
-                        //            // Return some number, add the open directory_entry to
-                        //            a cache
-                        //        }
-                    default:
-                        throw std::logic_error("Not implemented");
-                }
-            }();
-
-            if (response) {
-                auto tracker = send_timing.track_scope();
-                socket.send(response.value());
-            }
+    io_uring.accept(socket, [this](int32_t syscall_ret) {
+        if (client_socket = syscall_ret; client_socket >= 0) {
+            LOG_INFO(logger, "Accepted a connection");
+        } else {
+            LOG_ERROR(logger, "Error accepting a connection {}", std::strerror(-syscall_ret));
         }
-
-        io_uring.submit();
-    });
-
-    reactor.add(io_uring.fd(), [&] {
-        for (auto [ret, cb] = io_uring.queue_peek(); cb; std::tie(ret, cb) = io_uring.queue_peek()) {
-            LOG_TRACE_L1(logger, "In last callback, ret={}, cb={}", ret, reinterpret_cast<uint64_t>(cb.get()));
-            auto&& response = cb->callback(ret, cb.get());
-            socket.send(response);
-        }
-    });
-
-    reactor.add(monitoring_socket, [&] {
-        auto message = zmqpp::message{};
-        monitoring_socket.receive(message);
-
-        if (message.parts() == 0) {
-            loop_breaked.increment();
-            LOG_WARNING(logger, "Received empty monitoring message");
-            return;
-        }
-
-        struct __attribute__((packed)) event {
-            uint16_t number;
-            uint32_t value;
-        };
-
-        //        LOG_DEBUG(logger, "Received event message, with {} parts, event number={}, event value={},
-        //        address={}",
-        //                  message.parts(), reinterpret_cast<const struct event*>(message.raw_data(0))->number,
-        //                  reinterpret_cast<const struct event*>(message.raw_data(0))->value, message.get(1));
+        return nullptr;
     });
 
     while (true) {
         {
             auto tracker = wait_time.track_scope();
-            reactor.poll();
+            while (client_socket && read_counter < 10) {
+                LOG_TRACE_L3(logger, "Queuing read, in progress={}", reinterpret_cast<int>(read_counter));
+                read_counter++;
+                auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>(
+                    std::array<char, settings::MAX_MESSAGE_SIZE>{});
+                auto buffer_view = std::span{buffer->data(), buffer->size()};
+                io_uring.read(client_socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) {
+                    read_counter--;
+                    if (syscall_ret < 0) {
+                        LOG_ERROR(logger, "Read failed: {}", std::strerror(-syscall_ret));
+                        return nullptr;
+                    }
+
+                    if (syscall_ret == 0) {
+                        LOG_DEBUG(logger, "Read NULL message");
+                        return nullptr;
+                    }
+
+                    LOG_TRACE_L1(logger, "Read {} bytes of {}", syscall_ret, static_cast<int>(buffer->at(0)));
+                    switch (buffer->at(0)) {
+                        case 1: {
+                            syscalls.open(*reinterpret_cast<messages::requests::Open*>(buffer->data()), client_socket);
+                            break;
+                        }
+                        case 2: {
+                            syscalls.lookup(*reinterpret_cast<messages::requests::Lookup*>(buffer->data()),
+                                            client_socket);
+                            break;
+                        }
+                        case 3: {
+                            syscalls.getattr(*reinterpret_cast<messages::requests::GetAttr*>(buffer->data()),
+                                             client_socket);
+                            break;
+                        }
+                        case 4: {
+                            syscalls.readdir(*reinterpret_cast<messages::requests::ReadDir*>(buffer->data()),
+                                             client_socket);
+                            break;
+                        }
+                        case 5:
+                            syscalls.read(*reinterpret_cast<messages::requests::Read*>(buffer->data()), client_socket);
+                            break;
+                        case 6:
+                            syscalls.release(*reinterpret_cast<messages::requests::Release*>(buffer->data()));
+                            break;
+                        default:
+                            assert(false);
+                    }
+                    return nullptr;
+                });
+            }
+            io_uring.submit();
+            io_uring.queue_wait();
         }
 
         if (log_requested) {

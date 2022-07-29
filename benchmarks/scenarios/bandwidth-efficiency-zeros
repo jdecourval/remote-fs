@@ -1,7 +1,7 @@
 setup() {
-    socat -r >(wc -c | sed 's/^/bytes read: /' >&2) -R >(wc -c | sed 's/^/bytes written: /' >&2) UNIX-LISTEN:"/tmp/socat-write" UNIX-CONNECT:"/tmp/socat-read"&
-    endpoint_read=ipc:///tmp/socat-read
-    endpoint_write=ipc:///tmp/socat-write
+    socat -r >(wc -c | sed 's/^/bytes read: /' >&2) -R >(wc -c | sed 's/^/bytes written: /' >&2) TCP4-LISTEN:4096,reuseaddr,type=6,prototype=33,setsockopt-int=269:2:1 TCP4-CONNECT:localhost:4096,type=6,prototype=33,setsockopt-int=269:2:1 &
+    endpoint_read=127.0.0.1
+    endpoint_write=127.0.0.1
     fallocate -l 5G target/bigfile
 }
 

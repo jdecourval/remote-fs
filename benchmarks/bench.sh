@@ -7,7 +7,7 @@ usage() {
   echo "scenario: scenario to test. One of: $(ls $directory/scenarios | xargs)"
   echo server: Path to the server to benchmark
   echo client: Path to the client to benchmark
-  echo endpoint: zmq compatible endpoint, e.g. tcp://127.0.0.1:8943. Default to a random unix socket.
+  echo endpoint: e.g. 127.0.0.1.
   exit 0
 }
 
@@ -20,14 +20,14 @@ temp=$(mktemp -d)
 pushd "$temp" > /dev/null || exit 1
 mkdir target mountpoint
 setup
-endpoint_write=${endpoint_write:-"ipc://$temp/socket"}
-endpoint_read=${endpoint_read:-"ipc://$temp/socket"}
+endpoint_write=${endpoint_write:-"127.0.0.1"}
+endpoint_read=${endpoint_read:-"127.0.0.1"}
 
 cd target
 /usr/bin/time -v perf stat "$server" --metrics "$endpoint_read" &
 cd ..
 
-/usr/bin/time -v perf stat "$client" -f mountpoint "$endpoint_write" &
+/usr/bin/time -v perf stat "$client" -o max_read=8159 -f mountpoint "$endpoint_write" &
 sleep 2
 
 benchmark

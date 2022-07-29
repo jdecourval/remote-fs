@@ -4,10 +4,10 @@
 #include <fuse_lowlevel.h>
 
 #include <string>
-#include <zmqpp/context.hpp>
-#include <zmqpp/socket.hpp>
 
+#include "remotefs/messages/Messages.h"
 #include "remotefs/tools/FuseOp.h"
+#include "remotefs/uring/IoUring.h"
 
 namespace quill {
 class Logger;
@@ -24,15 +24,14 @@ class Client {
     ~Client();
     void start(const std::string& address);
 
-    template <typename... Ts>
-    friend void sendcall(FuseOp op, fuse_req_t req, Ts... args);
-
    private:
+    void fuse_callback(int ret);
     quill::Logger* logger;
-    zmqpp::context context;
-    zmqpp::socket socket;
+    int socket = 0;
     struct fuse_session* fuse_session;
     bool foreground;
+    IoUring io_uring;
+    volatile int read_counter = 0;
 };
 }  // namespace remotefs
 

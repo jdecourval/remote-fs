@@ -3,9 +3,10 @@
 
 #include <optional>
 
-#include "IoUring.h"
+#include "Config.h"
 #include "remotefs/inodecache/InodeCache.h"
-#include "remotefs/tools/MessageWrappers.h"
+#include "remotefs/messages/Messages.h"
+#include "remotefs/uring/IoUring.h"
 
 namespace quill {
 class Logger;
@@ -14,19 +15,18 @@ class Logger;
 namespace remotefs {
 
 class Syscalls {
-    using IoUringImpl = IoUring<MessageReceiver>;
-
    public:
-    Syscalls();
-    MessageReceiver open(MessageReceiver& message);
-    std::optional<MessageReceiver> lookup(MessageReceiver& message, IoUringImpl& uring);
-    MessageReceiver getattr(MessageReceiver& message);
-    MessageReceiver readdir(MessageReceiver& message);
-    void read(MessageReceiver& message, IoUringImpl& uring);
-    MessageReceiver release(MessageReceiver& message);
+    explicit Syscalls(IoUring& ring);
+    void open(messages::requests::Open& message, int socket);
+    void lookup(messages::requests::Lookup& message, int socket);
+    void getattr(messages::requests::GetAttr& message, int socket);
+    void readdir(messages::requests::ReadDir& message, int socket);
+    void read(messages::requests::Read& message, int socket);
+    void release(messages::requests::Release& message);
 
    private:
     quill::Logger* logger;
+    IoUring& uring;
     InodeCache inode_cache;
 };
 

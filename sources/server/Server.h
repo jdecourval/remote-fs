@@ -2,13 +2,11 @@
 #define REMOTE_FS_SERVER_H
 
 #include <string>
-#include <zmqpp/context.hpp>
-#include <zmqpp/socket.hpp>
 
 #include "Config.h"
-#include "IoUring.h"
 #include "Syscalls.h"
 #include "remotefs/metrics/Metrics.h"
+#include "remotefs/uring/IoUring.h"
 
 namespace quill {
 class Logger;
@@ -22,12 +20,13 @@ class Server {
     void start(const std::string& address);
 
    private:
-    zmqpp::context context;
-    zmqpp::socket socket;
+    int socket = 0;
+    int client_socket = 0;
     quill::Logger* logger;
     MetricRegistry<settings::DISABLE_METRICS> metric_registry;
     Syscalls syscalls;
-    IoUring<MessageReceiver> io_uring;
+    IoUring io_uring;
+    volatile int read_counter = 0;
     bool _metrics_on_stop;
 };
 

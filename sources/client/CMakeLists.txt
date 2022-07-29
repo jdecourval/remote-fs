@@ -13,7 +13,6 @@ pkg_check_modules(fuse REQUIRED IMPORTED_TARGET fuse3)
 
 target_link_libraries(remote-fs-client PUBLIC
         remotefs::remotefs
-        zmqpp
         PkgConfig::fuse
         quill::quill
         )

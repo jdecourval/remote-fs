@@ -1,22 +1,17 @@
 #include "Client.h"
 
+#include <netdb.h>
 #include <quill/Quill.h>
 
-#include <zmqpp/context.hpp>
-#include <zmqpp/poller.hpp>
-#include <zmqpp/reactor.hpp>
-#include <zmqpp/socket.hpp>
+#include <memory>
 
 #include "Config.h"
-#include "FuseBufVec.h"
 #include "FuseCmdlineOptsWrapper.h"
-#include "remotefs/tools/MessageWrappers.h"
 
 namespace remotefs {
 
 Client::Client(int argc, char *argv[])
-    : logger(quill::get_logger()),
-      socket(context, zmqpp::socket_type::xrequest) {
+    : logger(quill::get_logger()) {
     auto args = fuse_args{argc, argv, 0};
     auto options = FuseCmdlineOptsWrapper(args);
 
@@ -42,12 +37,77 @@ Client::Client(int argc, char *argv[])
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
     const struct fuse_lowlevel_ops fuse_ops = {
-        .lookup = [](auto... ts) { remotefs::sendcall(FuseOp::LOOKUP, ts...); },
-        .getattr = [](auto... ts) { remotefs::sendcall(FuseOp::GETATTR, ts...); },
-        .open = [](auto... ts) { remotefs::sendcall(FuseOp::OPEN, ts...); },
-        .read = [](auto... ts) { remotefs::sendcall(FuseOp::READ, ts...); },
-        .release = [](auto... ts) { remotefs::sendcall(FuseOp::RELEASE, ts...); },
-        .readdir = [](auto... ts) { remotefs::sendcall(FuseOp::READDIR, ts...); },
+        .init =
+            [](void *, struct fuse_conn_info *conn) {
+                //                    conn->want |= ((FUSE_CAP_SPLICE_MOVE | FUSE_CAP_SPLICE_WRITE) & conn->capable);
+                //                    conn->max_background = 16;
+                conn->max_read = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::MAX_PAYLOAD_SIZE;
+            },
+        .lookup =
+            [](fuse_req_t req, fuse_ino_t parent, const char *name) {
+                auto &client = *static_cast<Client *>(fuse_req_userdata(req));
+                LOG_TRACE_L1(client.logger, "Sending lookup for {}/{}, req={}", parent, name,
+                             reinterpret_cast<uintptr_t>(req));
+                // TODO: Error check
+                auto message_size = sizeof(messages::requests::Lookup) + strnlen(name, PATH_MAX) + 1;
+                auto message = std::unique_ptr<messages::requests::Lookup, void (*)(messages::requests::Lookup *)>{
+                    static_cast<messages::requests::Lookup *>(operator new(message_size)),
+                    [](auto *ptr) { operator delete(ptr); }};
+                message->tag = 2;
+                message->ino = parent;
+                message->req = req;
+                // TODO: Error check
+                strcpy(message->path, name);
+                auto message_view = std::span{reinterpret_cast<char *>(message.get()), message_size};
+                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int) mutable {});
+            },
+        .getattr =
+            [](fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *) {
+                auto &client = *static_cast<Client *>(fuse_req_userdata(req));
+                LOG_TRACE_L1(client.logger, "Sending getattr, req={}", reinterpret_cast<uintptr_t>(req));
+                auto message =
+                    std::make_unique<messages::requests::GetAttr>(messages::requests::GetAttr{.req = req, .ino = ino});
+                auto message_view = std::span{reinterpret_cast<char *>(message.get()), sizeof(*message)};
+                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int32_t) mutable {});
+            },
+        .open =
+            [](fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
+                auto &client = *static_cast<Client *>(fuse_req_userdata(req));
+                LOG_TRACE_L1(client.logger, "Sending open, req={}", reinterpret_cast<uintptr_t>(req));
+                auto message = std::make_unique<messages::requests::Open>(
+                    messages::requests::Open{.req = req, .ino = ino, .file_info = *fi});
+                auto message_view = std::span{reinterpret_cast<char *>(message.get()), sizeof(*message)};
+                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int32_t) mutable {});
+            },
+        .read =
+            [](fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *) {
+                auto &client = *static_cast<Client *>(fuse_req_userdata(req));
+                LOG_TRACE_L1(client.logger, "Sending read for {} of size {}, req={}", ino, size,
+                             reinterpret_cast<uintptr_t>(req));
+                auto message = std::make_unique<messages::requests::Read>(
+                    messages::requests::Read{.req = req, .ino = ino, .size = size, .offset = off});
+                auto message_view = std::span{reinterpret_cast<char *>(message.get()), sizeof(*message)};
+                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int32_t) mutable {});
+            },
+        .release =
+            [](fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *) {
+                auto &client = *static_cast<Client *>(fuse_req_userdata(req));
+                LOG_TRACE_L1(client.logger, "Sending release for {}", ino);
+                auto message =
+                    std::make_unique<messages::requests::Release>(messages::requests::Release{.req = req, .ino = ino});
+                auto message_view = std::span{reinterpret_cast<char *>(message.get()), sizeof(*message)};
+                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int32_t) mutable {});
+            },
+        .readdir =
+            [](fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *) {
+                auto &client = *static_cast<Client *>(fuse_req_userdata(req));
+                LOG_TRACE_L1(client.logger, "Sending readdir for {} with off {} and size {}, req=", ino, off, size,
+                             reinterpret_cast<uint64_t>(req));
+                auto message = std::make_unique<messages::requests::ReadDir>(
+                    messages::requests::ReadDir{.req = req, .ino = ino, .size = size, .offset = off});
+                auto message_view = std::span{reinterpret_cast<char *>(message.get()), sizeof(*message)};
+                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int32_t) mutable {});
+            },
     };
 #pragma GCC diagnostic pop
 
@@ -67,125 +127,134 @@ Client::Client(int argc, char *argv[])
     fuse_opt_free_args(&args);
 }
 
+void Client::fuse_callback(int ret) {
+    LOG_TRACE_L2(logger, "Fuse file description is having activity: {}", ret);
+    auto fbuf = fuse_buf{};
+    auto res = fuse_session_receive_buf(fuse_session, &fbuf);
+
+    if (res <= 0 && res != -EINTR) {
+        throw std::runtime_error("?");
+    }
+
+    io_uring.add_fd(fuse_session_fd(fuse_session), [this](auto ret) { fuse_callback(ret); });
+    fuse_session_process_buf(fuse_session, &fbuf);
+}
+
 void Client::start(const std::string &address) {
-    // open the connection
+    class GetAddrInfoErrorCategory : public std::error_category {
+        [[nodiscard]] const char *name() const noexcept override {
+            return "getaddrinfo";
+        }
+        [[nodiscard]] std::string message(int i) const override {
+            return gai_strerror(i);
+        }
+    };
+
     LOG_INFO(logger, "Opening connection to {}", address);
-    socket.connect(address);
+    struct addrinfo hosthints {
+        .ai_family = AF_INET, .ai_socktype = SOCK_DCCP, .ai_protocol = IPPROTO_DCCP
+    };
+    struct addrinfo *hostinfo;  // TODO: unique_ptr with freeaddrinfo
+    if (auto ret = getaddrinfo(address.c_str(), "5001", &hosthints, &hostinfo); ret < 0) {
+        throw std::system_error(ret, GetAddrInfoErrorCategory(), "Failed to resolve address");
+    }
+
+    socket = ::socket(hostinfo->ai_family, hostinfo->ai_socktype, hostinfo->ai_protocol);
+    if (socket < 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to configure socket");
+    }
+
+    if (connect(socket, hostinfo->ai_addr, hostinfo->ai_addrlen) < 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to connect socket");
+    }
+    //    if (getsockopt(socket_fd, SOL_DCCP, DCCP_SOCKOPT_GET_CUR_MPS, &mps, &res_len))
+    //        error_exit("getsockopt(DCCP_SOCKOPT_GET_CUR_MPS)");
 
     fuse_daemonize(foreground);
 
-    MessageTransmitter message;
-    auto poll = zmqpp::poller();
-    poll.add(fuse_session_fd(fuse_session), socket);
-
-    auto reactor = zmqpp::reactor();
-    reactor.add(socket, [&] {
-        socket.receive(message);
-        LOG_TRACE_L1(logger, "Received message {}", static_cast<int>(message.op()));
-
-        switch (message.op()) {
-            case LOOKUP:
-                if (message.usr_data_parts() == 1) {
-                    auto result = message.copy_usr_data<struct fuse_entry_param>(0);
-                    if (fuse_reply_entry(message.req(), &result) < 0) {
-                        throw std::runtime_error("fuse_reply_entry failed");
-                    }
-                } else {
-                    LOG_TRACE_L1(logger, "Received lookup failure");
-                    fuse_reply_err(message.req(), ENOENT);
-                }
-                break;
-            case GETATTR:
-                if (message.usr_data_parts() == 1) {
-                    auto result = message.copy_usr_data<struct stat>(0);
-                    if (fuse_reply_attr(message.req(), &result, 1.0) < 0) {
-                        throw std::runtime_error("fuse_reply_attr failed");
-                    }
-                } else {
-                    LOG_TRACE_L1(logger, "Received getattr failure");
-                    fuse_reply_err(message.req(), ENOENT);
-                }
-                break;
-            case READ:
-            case READDIR: {
-                LOG_TRACE_L1(logger, "Received read or readdir in {} parts", message.usr_data_parts());
-                auto bufvec = FuseBufVec<settings::client::FUSE_READ_BUFFER_SIZE>{};
-                bufvec.count = message.usr_data_parts();
-
-                if (bufvec.count == 0) {
-                    fuse_reply_buf(message.req(), nullptr, 0);
-                    break;
-                }
-
-                bufvec.idx = 0;
-                bufvec.off = 0;
-
-                if (bufvec.count <= bufvec.buf.size()) {
-                    // Use the stack for small buffers
-                    for (auto i = 0u; i < bufvec.count; i++) {
-                        bufvec.buf[i].mem = message.raw_usr_data(i);
-                        bufvec.buf[i].size = message.usr_data_size(i);
-                    }
-
-                    if (fuse_reply_data(message.req(), reinterpret_cast<::fuse_bufvec *>(&bufvec),
-                                        FUSE_BUF_SPLICE_MOVE) < 0) {
-                        throw std::runtime_error("fuse_reply_data failed");
-                    }
-                } else {
-                    LOG_TRACE_L2(logger, "Buffer is too small, allocating");
-                    auto buffer = std::unique_ptr<fuse_bufvec, decltype(&free)>(
-                        reinterpret_cast<fuse_bufvec *>(malloc(sizeof(fuse_bufvec) + bufvec.count * sizeof(fuse_buf))),
-                        free);
-
-                    buffer->count = bufvec.count;
-                    buffer->idx = 0;
-                    buffer->off = 0;
-
-                    for (auto i = 0u; i < buffer->count; i++) {
-                        buffer->buf[i].mem = message.raw_usr_data(i);
-                        buffer->buf[i].size = message.usr_data_size(i);
-                    }
-
-                    if (fuse_reply_data(message.req(), buffer.get(), FUSE_BUF_SPLICE_MOVE) < 0) {
-                        throw std::runtime_error("fuse_reply_data failed");
-                    }
-                }
-
-                break;
-            }
-
-            case OPEN:
-                if (message.usr_data_parts() == 0) {
-                    fuse_reply_err(message.req(), EINVAL);
-                } else {
-                    auto result = message.copy_usr_data<fuse_file_info>(0);
-                    fuse_reply_open(message.req(), &result);
-                }
-                break;
-
-            case RELEASE:
-                if (message.usr_data_parts() == 0) {
-                    fuse_reply_err(message.req(), 0);
-                } else {
-                    throw std::logic_error("Not implemented");
-                }
-                break;
-        }
-    });
-
-    reactor.add(fuse_session_fd(fuse_session), [&] {
-        auto fbuf = fuse_buf{};
-        auto res = fuse_session_receive_buf(fuse_session, &fbuf);
-
-        if (res <= 0 && res != -EINTR) {
-            throw std::runtime_error("?");
-        }
-
-        fuse_session_process_buf(fuse_session, &fbuf);
-    });
+    io_uring.add_fd(fuse_session_fd(fuse_session), [this](auto ret) { fuse_callback(ret); });
 
     while (!fuse_session_exited(fuse_session)) {
-        reactor.poll();
+        while (read_counter < 10) {
+            auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>();
+            assert(reinterpret_cast<uintptr_t>(buffer.get()) % 8 == 0);
+            auto buffer_view = std::span{buffer->data(), buffer->size()};
+            LOG_TRACE_L3(logger, "Queuing read, in progress={}", reinterpret_cast<int>(read_counter));
+            read_counter++;
+            io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) {
+                read_counter--;
+                if (syscall_ret < 0) {
+                    LOG_ERROR(logger, "Read failed: {}", std::strerror(-syscall_ret));
+                    return nullptr;
+                }
+
+                if (syscall_ret == 0) {
+                    LOG_INFO(logger, "Read NULL message");
+                    return nullptr;
+                }
+
+                switch (buffer->at(0)) {
+                    case 1: {
+                        auto *msg = reinterpret_cast<const messages::responses::FuseReplyEntry *>(buffer->data());
+                        LOG_DEBUG(logger, "Received FuseReplyEntry, ino={}, req={}", msg->attr.ino,
+                                  reinterpret_cast<uint64_t>(msg->req));
+
+                        if (auto ret = fuse_reply_entry(msg->req, &msg->attr); ret < 0) {
+                            throw std::system_error(-ret, std::generic_category(), "fuse_reply_entry failure");
+                        }
+                        break;
+                    }
+                    case 2: {
+                        auto &msg = *reinterpret_cast<const messages::responses::FuseReplyAttr *>(buffer->data());
+                        LOG_DEBUG(logger, "Received FuseReplyAttr, req={}", reinterpret_cast<uint64_t>(msg.req));
+                        if (auto ret = fuse_reply_attr(msg.req, &msg.attr, 1.0); ret < 0) {
+                            throw std::system_error(-ret, std::generic_category(), "fuse_reply_attr failure");
+                        }
+                        break;
+                    }
+                    case 3: {
+                        auto &msg = *reinterpret_cast<const messages::responses::FuseReplyOpen *>(buffer->data());
+                        LOG_DEBUG(logger, "Received FuseReplyOpen, req={}", reinterpret_cast<uint64_t>(msg.req));
+                        if (auto ret = fuse_reply_open(msg.req, &msg.file_info); ret < 0) {
+                            throw std::system_error(-ret, std::generic_category(), "fuse_reply_open failure");
+                        }
+                        break;
+                    }
+                    case 4: {
+                        auto &msg = *reinterpret_cast<messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE> *>(
+                            buffer->data());
+                        //                            assert(msg.size() <= settings::MAX_MESSAGE_SIZE);
+                        LOG_DEBUG(logger, "Received FuseReplyBuf, req={}, size={}", reinterpret_cast<uint64_t>(msg.req),
+                                  msg.data_size);
+                        auto buf_vec = fuse_bufvec{.count = 1,
+                                                   .idx = 0,
+                                                   .off = 0,
+                                                   .buf = {{.size = static_cast<size_t>(msg.data_size),
+                                                            .flags = static_cast<fuse_buf_flags>(0),
+                                                            .mem = msg.data.data()}}};
+                        if (auto ret = fuse_reply_data(msg.req, &buf_vec, FUSE_BUF_SPLICE_MOVE); ret < 0) {
+                            throw std::system_error(-ret, std::generic_category(), "fuse_reply_data failure");
+                        }
+                        break;
+                    }
+                    case 5: {
+                        auto &msg = *reinterpret_cast<const messages::responses::FuseReplyErr *>(buffer->data());
+                        LOG_WARNING(logger, "Received error for req {}: {}", reinterpret_cast<uint64_t>(msg.req),
+                                    std::strerror(msg.error_code));
+                        if (auto ret = fuse_reply_err(msg.req, msg.error_code); ret < 0) {
+                            throw std::system_error(-ret, std::generic_category(), "fuse_reply_err failure");
+                        }
+                        break;
+                    }
+                    default:
+                        assert(false);
+                }
+                return nullptr;
+            });
+        }
+        io_uring.submit();
+
+        io_uring.queue_wait();
     }
 
     LOG_INFO(logger, "Done");
@@ -195,12 +264,5 @@ Client::~Client() {
     fuse_session_unmount(fuse_session);
     fuse_remove_signal_handlers(fuse_session);
     fuse_session_destroy(fuse_session);
-}
-
-template <typename... Ts>
-void sendcall(FuseOp op, fuse_req_t req, Ts... args) {
-    auto message = MessageTransmitter(std::uint8_t{op}, reinterpret_cast<uintptr_t>(req), args...);
-    static_cast<remotefs::Client *>(fuse_req_userdata(req))->socket.send(message);
-    LOG_TRACE_L1(quill::get_logger(), "Sent {}", static_cast<int>(op));
 }
 }  // namespace remotefs
