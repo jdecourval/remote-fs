@@ -27,7 +27,7 @@ cd target
 /usr/bin/time -v perf stat "$server" --metrics "$endpoint_read" &
 cd ..
 
-/usr/bin/time -v perf stat "$client" -o max_read=8159 -f mountpoint "$endpoint_write" &
+/usr/bin/time -v perf stat "$client" -o max_read=65422 -f mountpoint "$endpoint_write" &
 sleep 2
 
 benchmark

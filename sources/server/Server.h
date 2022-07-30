@@ -18,6 +18,7 @@ class Server {
    public:
     explicit Server(bool metrics_on_stop = false);
     void start(const std::string& address);
+    void read_callback(int syscall_ret, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer);
 
    private:
     int socket = 0;

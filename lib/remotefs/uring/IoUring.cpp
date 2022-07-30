@@ -1,6 +1,7 @@
 #include "remotefs/uring/IoUring.h"
 
 #include <cassert>
+#include <iostream>
 
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "cppcoreguidelines-pro-type-member-init"
@@ -33,9 +34,10 @@ void remotefs::IoUring::queue_peek() {
 void remotefs::IoUring::queue_wait() {
     auto cqes = std::array<io_uring_cqe*, wait_max_batch_size>{};
     auto timeout = timespec{wait_timeout_s, 0};
-    if (auto ret = io_uring_wait_cqes(&ring, cqes.data(), wait_min_batch_size,
-                                      reinterpret_cast<__kernel_timespec*>(&timeout), nullptr);
+    if (int ret = io_uring_submit_and_wait_timeout(&ring, cqes.data(), wait_min_batch_size,
+                                                   reinterpret_cast<__kernel_timespec*>(&timeout), nullptr);
         ret == -ETIME || ret == -EINTR) [[unlikely]] {
+        return;
     } else if (ret < 0) [[unlikely]] {
         throw std::system_error(-ret, std::generic_category(), "io_uring_wait_cqes failed");
     }
@@ -56,5 +58,5 @@ void remotefs::IoUring::queue_wait() {
 }
 
 void remotefs::IoUring::submit() {
-    io_uring_submit(&ring);
+    //    io_uring_submit(&ring);
 }

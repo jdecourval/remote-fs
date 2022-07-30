@@ -116,6 +116,7 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
 
     if (off == 1) {  // off must start at 1
         LOG_TRACE_L2(logger, "Adding . to buffer");
+        auto free_space = response->free_space();
         auto entry_size = fuse_add_direntry(nullptr, response->data.data() + response->data_size,
                                             response->free_space(), ".", &root_entry.second.stat, off);
         assert(entry_size <= response->data.size());
@@ -136,6 +137,7 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
     if (off == 2) {
         auto permissions = std::filesystem::status("..").permissions();
         LOG_TRACE_L2(logger, "Adding .. to buffer");
+        auto free_space = response->free_space();
         struct stat stbuf = {};
         // Other fields are not currently used by fuse
         stbuf.st_ino = 1;
@@ -161,6 +163,7 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
                                        std::max(0l, off - 3))) {
         auto filename = entry.path().filename();
         LOG_TRACE_L2(logger, "Adding {} to buffer at offset {}", filename, off);
+        auto free_space = response->free_space();
         auto permissions = entry.status().permissions();
         struct stat stbuf {};
         stbuf.st_ino = 2;  // This is of course wrong
@@ -192,8 +195,9 @@ void Syscalls::read(messages::requests::Read& message, int socket) {
     auto ino = message.ino;
     auto to_read = static_cast<int>(message.size);
     auto off = message.offset;
-    LOG_TRACE_L1(logger, "Received read for ino {}, with size {} and offset {}, req={}", ino, to_read, off,
-                 reinterpret_cast<uintptr_t>(message.req));
+    LOG_TRACE_L1(logger, "Received read for ino {}, with size {} and offset {}, req={}, {}", ino, to_read, off,
+                 reinterpret_cast<uintptr_t>(message.req),
+                 messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::MAX_PAYLOAD_SIZE);
     auto file_handle = inode_cache.inode_from_ino(ino).second.handle();
     assert(to_read <= messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::MAX_PAYLOAD_SIZE);
     // TODO: Test two modes of allocation:
@@ -229,6 +233,7 @@ void Syscalls::open(messages::requests::Open& message, int socket) {
         InodeCache::open(inode);  // TODO: Handle errors
         auto response = std::make_unique<messages::responses::FuseReplyOpen>(
             messages::responses::FuseReplyOpen{message.req, file_info});
+        response->file_info.direct_io = 1;
         auto response_view = std::span{reinterpret_cast<char*>(response.get()), sizeof(*response)};
         LOG_TRACE_L2(logger, "Sending FuseReplyOpen");
         uring.write(socket, response_view, [response = std::move(response)](int) {});

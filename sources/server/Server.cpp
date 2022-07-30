@@ -36,6 +36,57 @@ Server::Server(bool metrics_on_stop)
     std::signal(SIGTERM, signal_term_handler);
 }
 
+void Server::read_callback(int syscall_ret, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer) {
+    auto buffer_view = std::span{buffer->data(), buffer->size()};
+
+    if (syscall_ret < 0) {
+        LOG_ERROR(logger, "Read failed: {}", std::strerror(-syscall_ret));
+        io_uring.read(client_socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+            read_callback(syscall_ret, std::move(buffer));
+        });
+        return;
+    }
+
+    if (syscall_ret == 0) {
+        LOG_DEBUG(logger, "Read NULL message");
+        io_uring.read(client_socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+            read_callback(syscall_ret, std::move(buffer));
+        });
+        return;
+    }
+
+    LOG_TRACE_L1(logger, "Read {} bytes of {}", syscall_ret, static_cast<int>(buffer->at(0)));
+    switch (buffer->at(0)) {
+        case 1: {
+            syscalls.open(*reinterpret_cast<messages::requests::Open*>(buffer->data()), client_socket);
+            break;
+        }
+        case 2: {
+            syscalls.lookup(*reinterpret_cast<messages::requests::Lookup*>(buffer->data()), client_socket);
+            break;
+        }
+        case 3: {
+            syscalls.getattr(*reinterpret_cast<messages::requests::GetAttr*>(buffer->data()), client_socket);
+            break;
+        }
+        case 4: {
+            syscalls.readdir(*reinterpret_cast<messages::requests::ReadDir*>(buffer->data()), client_socket);
+            break;
+        }
+        case 5:
+            syscalls.read(*reinterpret_cast<messages::requests::Read*>(buffer->data()), client_socket);
+            break;
+        case 6:
+            syscalls.release(*reinterpret_cast<messages::requests::Release*>(buffer->data()));
+            break;
+        default:
+            assert(false);
+    }
+    io_uring.read(client_socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+        read_callback(syscall_ret, std::move(buffer));
+    });
+}
+
 void Server::start(const std::string& address) {
     class GetAddrInfoErrorCategory : public std::error_category {
         const char* name() const noexcept override {
@@ -85,67 +136,20 @@ void Server::start(const std::string& address) {
     io_uring.accept(socket, [this](int32_t syscall_ret) {
         if (client_socket = syscall_ret; client_socket >= 0) {
             LOG_INFO(logger, "Accepted a connection");
+            auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>();
+            auto buffer_view = std::span{buffer->data(), buffer->size()};
+            io_uring.read(client_socket, buffer_view, 0,
+                          [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+                              read_callback(syscall_ret, std::move(buffer));
+                          });
         } else {
             LOG_ERROR(logger, "Error accepting a connection {}", std::strerror(-syscall_ret));
         }
-        return nullptr;
     });
 
     while (true) {
         {
             auto tracker = wait_time.track_scope();
-            while (client_socket && read_counter < 10) {
-                LOG_TRACE_L3(logger, "Queuing read, in progress={}", reinterpret_cast<int>(read_counter));
-                read_counter++;
-                auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>(
-                    std::array<char, settings::MAX_MESSAGE_SIZE>{});
-                auto buffer_view = std::span{buffer->data(), buffer->size()};
-                io_uring.read(client_socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) {
-                    read_counter--;
-                    if (syscall_ret < 0) {
-                        LOG_ERROR(logger, "Read failed: {}", std::strerror(-syscall_ret));
-                        return nullptr;
-                    }
-
-                    if (syscall_ret == 0) {
-                        LOG_DEBUG(logger, "Read NULL message");
-                        return nullptr;
-                    }
-
-                    LOG_TRACE_L1(logger, "Read {} bytes of {}", syscall_ret, static_cast<int>(buffer->at(0)));
-                    switch (buffer->at(0)) {
-                        case 1: {
-                            syscalls.open(*reinterpret_cast<messages::requests::Open*>(buffer->data()), client_socket);
-                            break;
-                        }
-                        case 2: {
-                            syscalls.lookup(*reinterpret_cast<messages::requests::Lookup*>(buffer->data()),
-                                            client_socket);
-                            break;
-                        }
-                        case 3: {
-                            syscalls.getattr(*reinterpret_cast<messages::requests::GetAttr*>(buffer->data()),
-                                             client_socket);
-                            break;
-                        }
-                        case 4: {
-                            syscalls.readdir(*reinterpret_cast<messages::requests::ReadDir*>(buffer->data()),
-                                             client_socket);
-                            break;
-                        }
-                        case 5:
-                            syscalls.read(*reinterpret_cast<messages::requests::Read*>(buffer->data()), client_socket);
-                            break;
-                        case 6:
-                            syscalls.release(*reinterpret_cast<messages::requests::Release*>(buffer->data()));
-                            break;
-                        default:
-                            assert(false);
-                    }
-                    return nullptr;
-                });
-            }
-            io_uring.submit();
             io_uring.queue_wait();
         }
 

@@ -5,6 +5,7 @@
 
 #include <string>
 
+#include "Config.h"
 #include "remotefs/messages/Messages.h"
 #include "remotefs/tools/FuseOp.h"
 #include "remotefs/uring/IoUring.h"
@@ -25,7 +26,7 @@ class Client {
     void start(const std::string& address);
 
    private:
-    void fuse_callback(int ret);
+    void read_callback(int syscall_ret, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer);
     quill::Logger* logger;
     int socket = 0;
     struct fuse_session* fuse_session;

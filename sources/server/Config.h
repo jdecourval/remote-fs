@@ -7,7 +7,7 @@ const constexpr auto DISABLE_METRICS = true;
 #else
 const constexpr auto DISABLE_METRICS = false;
 #endif
-const constexpr auto MAX_MESSAGE_SIZE = 8192;
+const constexpr auto MAX_MESSAGE_SIZE = 65475 - 20;
 }  // namespace remotefs::settings
 
 #endif

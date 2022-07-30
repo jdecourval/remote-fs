@@ -1,5 +1,6 @@
 #include "Client.h"
 
+#include <linux/dccp.h>
 #include <netdb.h>
 #include <quill/Quill.h>
 
@@ -39,8 +40,9 @@ Client::Client(int argc, char *argv[])
     const struct fuse_lowlevel_ops fuse_ops = {
         .init =
             [](void *, struct fuse_conn_info *conn) {
-                //                    conn->want |= ((FUSE_CAP_SPLICE_MOVE | FUSE_CAP_SPLICE_WRITE) & conn->capable);
-                //                    conn->max_background = 16;
+                //                conn->want |= ((FUSE_CAP_SPLICE_MOVE | FUSE_CAP_SPLICE_WRITE) & conn->capable);
+                conn->max_background = 100;
+                conn->max_readahead = 1024 * 1024 * 1024;
                 conn->max_read = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::MAX_PAYLOAD_SIZE;
             },
         .lookup =
@@ -127,17 +129,84 @@ Client::Client(int argc, char *argv[])
     fuse_opt_free_args(&args);
 }
 
-void Client::fuse_callback(int ret) {
-    LOG_TRACE_L2(logger, "Fuse file description is having activity: {}", ret);
-    auto fbuf = fuse_buf{};
-    auto res = fuse_session_receive_buf(fuse_session, &fbuf);
+void Client::read_callback(int syscall_ret, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>> &&buffer) {
+    auto buffer_view = std::span{buffer->data(), buffer->size()};
 
-    if (res <= 0 && res != -EINTR) {
-        throw std::runtime_error("?");
+    if (syscall_ret < 0) {
+        LOG_ERROR(logger, "Read failed: {}", std::strerror(-syscall_ret));
+        io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+            read_callback(syscall_ret, std::move(buffer));
+        });
+        return;
     }
 
-    io_uring.add_fd(fuse_session_fd(fuse_session), [this](auto ret) { fuse_callback(ret); });
-    fuse_session_process_buf(fuse_session, &fbuf);
+    if (syscall_ret == 0) {
+        LOG_INFO(logger, "Read NULL message");
+        io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+            read_callback(syscall_ret, std::move(buffer));
+        });
+        return;
+    }
+
+    switch (buffer->at(0)) {
+        case 1: {
+            auto *msg = reinterpret_cast<const messages::responses::FuseReplyEntry *>(buffer->data());
+            LOG_DEBUG(logger, "Received FuseReplyEntry, ino={}, req={}", msg->attr.ino,
+                      reinterpret_cast<uint64_t>(msg->req));
+
+            if (auto ret = fuse_reply_entry(msg->req, &msg->attr); ret < 0) {
+                throw std::system_error(-ret, std::generic_category(), "fuse_reply_entry failure");
+            }
+            break;
+        }
+        case 2: {
+            auto &msg = *reinterpret_cast<const messages::responses::FuseReplyAttr *>(buffer->data());
+            LOG_DEBUG(logger, "Received FuseReplyAttr, req={}", reinterpret_cast<uint64_t>(msg.req));
+            if (auto ret = fuse_reply_attr(msg.req, &msg.attr, 1.0); ret < 0) {
+                throw std::system_error(-ret, std::generic_category(), "fuse_reply_attr failure");
+            }
+            break;
+        }
+        case 3: {
+            auto &msg = *reinterpret_cast<const messages::responses::FuseReplyOpen *>(buffer->data());
+            LOG_DEBUG(logger, "Received FuseReplyOpen, req={}", reinterpret_cast<uint64_t>(msg.req));
+            if (auto ret = fuse_reply_open(msg.req, &msg.file_info); ret < 0) {
+                throw std::system_error(-ret, std::generic_category(), "fuse_reply_open failure");
+            }
+            break;
+        }
+        case 4: {
+            auto &msg =
+                *reinterpret_cast<messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE> *>(buffer->data());
+            //                            assert(msg.size() <= settings::MAX_MESSAGE_SIZE);
+            LOG_DEBUG(logger, "Received FuseReplyBuf, req={}, size={}", reinterpret_cast<uint64_t>(msg.req),
+                      msg.data_size);
+            auto buf_vec = fuse_bufvec{.count = 1,
+                                       .idx = 0,
+                                       .off = 0,
+                                       .buf = {{.size = static_cast<size_t>(msg.data_size),
+                                                .flags = static_cast<fuse_buf_flags>(0),
+                                                .mem = msg.data.data()}}};
+            if (auto ret = fuse_reply_data(msg.req, &buf_vec, FUSE_BUF_SPLICE_MOVE); ret < 0) {
+                throw std::system_error(-ret, std::generic_category(), "fuse_reply_data failure");
+            }
+            break;
+        }
+        case 5: {
+            auto &msg = *reinterpret_cast<const messages::responses::FuseReplyErr *>(buffer->data());
+            LOG_WARNING(logger, "Received error for req {}: {}", reinterpret_cast<uint64_t>(msg.req),
+                        std::strerror(msg.error_code));
+            if (auto ret = fuse_reply_err(msg.req, msg.error_code); ret < 0) {
+                throw std::system_error(-ret, std::generic_category(), "fuse_reply_err failure");
+            }
+            break;
+        }
+        default:
+            assert(false);
+    }
+    io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+        read_callback(syscall_ret, std::move(buffer));
+    });
 }
 
 void Client::start(const std::string &address) {
@@ -167,93 +236,41 @@ void Client::start(const std::string &address) {
     if (connect(socket, hostinfo->ai_addr, hostinfo->ai_addrlen) < 0) {
         throw std::system_error(errno, std::system_category(), "Failed to connect socket");
     }
-    //    if (getsockopt(socket_fd, SOL_DCCP, DCCP_SOCKOPT_GET_CUR_MPS, &mps, &res_len))
-    //        error_exit("getsockopt(DCCP_SOCKOPT_GET_CUR_MPS)");
+    int mps;
+    socklen_t mps_size = sizeof(mps);
+    if (getsockopt(socket, SOL_DCCP, DCCP_SOCKOPT_GET_CUR_MPS, &mps, &mps_size) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to get current maximum packet size");
+    }
+    LOG_INFO(logger, "Maximum packet size: {}", mps);
 
     fuse_daemonize(foreground);
 
-    io_uring.add_fd(fuse_session_fd(fuse_session), [this](auto ret) { fuse_callback(ret); });
+    io_uring.add_fd(fuse_session_fd(fuse_session), [this](auto ret) {
+        LOG_TRACE_L2(logger, "Fuse file description is having activity: {}", ret);
+        assert(ret == 1);
+        struct pollfd fds[1];
+
+        fds[0].fd = fuse_session_fd(fuse_session);
+        fds[0].events = POLLIN;
+        while (poll(fds, 1, 0) > 0) {
+            auto fbuf = fuse_buf{};
+            auto res = fuse_session_receive_buf(fuse_session, &fbuf);
+
+            if (res <= 0 && res != -EINTR) {
+                throw std::runtime_error("?");
+            }
+            fuse_session_process_buf(fuse_session, &fbuf);
+        };
+    });
+
+    auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>();
+    assert(reinterpret_cast<uintptr_t>(buffer.get()) % 8 == 0);
+    auto buffer_view = std::span{buffer->data(), buffer->size()};
+    io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+        read_callback(syscall_ret, std::move(buffer));
+    });
 
     while (!fuse_session_exited(fuse_session)) {
-        while (read_counter < 10) {
-            auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>();
-            assert(reinterpret_cast<uintptr_t>(buffer.get()) % 8 == 0);
-            auto buffer_view = std::span{buffer->data(), buffer->size()};
-            LOG_TRACE_L3(logger, "Queuing read, in progress={}", reinterpret_cast<int>(read_counter));
-            read_counter++;
-            io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) {
-                read_counter--;
-                if (syscall_ret < 0) {
-                    LOG_ERROR(logger, "Read failed: {}", std::strerror(-syscall_ret));
-                    return nullptr;
-                }
-
-                if (syscall_ret == 0) {
-                    LOG_INFO(logger, "Read NULL message");
-                    return nullptr;
-                }
-
-                switch (buffer->at(0)) {
-                    case 1: {
-                        auto *msg = reinterpret_cast<const messages::responses::FuseReplyEntry *>(buffer->data());
-                        LOG_DEBUG(logger, "Received FuseReplyEntry, ino={}, req={}", msg->attr.ino,
-                                  reinterpret_cast<uint64_t>(msg->req));
-
-                        if (auto ret = fuse_reply_entry(msg->req, &msg->attr); ret < 0) {
-                            throw std::system_error(-ret, std::generic_category(), "fuse_reply_entry failure");
-                        }
-                        break;
-                    }
-                    case 2: {
-                        auto &msg = *reinterpret_cast<const messages::responses::FuseReplyAttr *>(buffer->data());
-                        LOG_DEBUG(logger, "Received FuseReplyAttr, req={}", reinterpret_cast<uint64_t>(msg.req));
-                        if (auto ret = fuse_reply_attr(msg.req, &msg.attr, 1.0); ret < 0) {
-                            throw std::system_error(-ret, std::generic_category(), "fuse_reply_attr failure");
-                        }
-                        break;
-                    }
-                    case 3: {
-                        auto &msg = *reinterpret_cast<const messages::responses::FuseReplyOpen *>(buffer->data());
-                        LOG_DEBUG(logger, "Received FuseReplyOpen, req={}", reinterpret_cast<uint64_t>(msg.req));
-                        if (auto ret = fuse_reply_open(msg.req, &msg.file_info); ret < 0) {
-                            throw std::system_error(-ret, std::generic_category(), "fuse_reply_open failure");
-                        }
-                        break;
-                    }
-                    case 4: {
-                        auto &msg = *reinterpret_cast<messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE> *>(
-                            buffer->data());
-                        //                            assert(msg.size() <= settings::MAX_MESSAGE_SIZE);
-                        LOG_DEBUG(logger, "Received FuseReplyBuf, req={}, size={}", reinterpret_cast<uint64_t>(msg.req),
-                                  msg.data_size);
-                        auto buf_vec = fuse_bufvec{.count = 1,
-                                                   .idx = 0,
-                                                   .off = 0,
-                                                   .buf = {{.size = static_cast<size_t>(msg.data_size),
-                                                            .flags = static_cast<fuse_buf_flags>(0),
-                                                            .mem = msg.data.data()}}};
-                        if (auto ret = fuse_reply_data(msg.req, &buf_vec, FUSE_BUF_SPLICE_MOVE); ret < 0) {
-                            throw std::system_error(-ret, std::generic_category(), "fuse_reply_data failure");
-                        }
-                        break;
-                    }
-                    case 5: {
-                        auto &msg = *reinterpret_cast<const messages::responses::FuseReplyErr *>(buffer->data());
-                        LOG_WARNING(logger, "Received error for req {}: {}", reinterpret_cast<uint64_t>(msg.req),
-                                    std::strerror(msg.error_code));
-                        if (auto ret = fuse_reply_err(msg.req, msg.error_code); ret < 0) {
-                            throw std::system_error(-ret, std::generic_category(), "fuse_reply_err failure");
-                        }
-                        break;
-                    }
-                    default:
-                        assert(false);
-                }
-                return nullptr;
-            });
-        }
-        io_uring.submit();
-
         io_uring.queue_wait();
     }
 

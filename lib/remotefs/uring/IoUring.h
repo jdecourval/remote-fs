@@ -2,6 +2,7 @@
 #define REMOTE_FS_IOURING_H
 
 #include <poll.h>
+#include <sys/epoll.h>
 
 #include <type_traits>
 
@@ -15,9 +16,9 @@
 namespace remotefs {
 
 class IoUring {
-    static const auto queue_depth = 64;
+    static const auto queue_depth = 16;
     static const auto wait_min_batch_size = 1;
-    static const auto wait_max_batch_size = 10;
+    static const auto wait_max_batch_size = 100;
     static const auto wait_timeout_s = 1;
 
    public:
@@ -81,7 +82,7 @@ template <typename Callable>
 void IoUring::add_fd(int fd, Callable&& callable) {
     auto callback = new CallbackWithPointer<Callable>{std::forward<Callable>(callable)};
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
-        io_uring_prep_poll_add(sqe, fd, POLLIN);
+        io_uring_prep_poll_multishot(sqe, fd, POLLIN);
         io_uring_sqe_set_data(sqe, callback);
     }
 }
