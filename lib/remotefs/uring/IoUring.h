@@ -55,12 +55,17 @@ class IoUring {
     void read(int fd, std::span<char> destination, size_t offset, Callable&& callable);
 
     template <typename Callable>
+    void read_fixed(int fd, std::span<char> destination, size_t offset, Callable&& callable);
+
+    template <typename Callable>
     void write(int fd, std::span<char> source, Callable&& callable);
 
     template <typename Callable, size_t size>
     void write_vector(int fd, std::span<iovec, size> sources, Callable&& callable);
 
     void queue_wait();
+
+    void register_buffer(std::span<char> buffer);
 
    private:
     io_uring ring;
@@ -102,6 +107,15 @@ void IoUring::read(int fd, std::span<char> destination, size_t offset, Callable&
     auto callback = new CallbackWithPointer<Callable>{std::forward<Callable>(callable)};
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
         io_uring_prep_read(sqe, fd, destination.data(), destination.size(), offset);
+        io_uring_sqe_set_data(sqe, callback);
+    }
+}
+
+template <typename Callable>
+void IoUring::read_fixed(int fd, std::span<char> destination, size_t offset, Callable&& callable) {
+    auto callback = new CallbackWithPointer<Callable>{std::forward<Callable>(callable)};
+    if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
+        io_uring_prep_read_fixed(sqe, fd, destination.data(), destination.size(), offset, 0);
         io_uring_sqe_set_data(sqe, callback);
     }
 }

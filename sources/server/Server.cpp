@@ -42,17 +42,19 @@ void Server::read_callback(int syscall_ret, std::unique_ptr<std::array<char, set
 
     if (syscall_ret < 0) {
         LOG_ERROR(logger, "Read failed: {}", std::strerror(-syscall_ret));
-        io_uring.read(client_socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-            read_callback(syscall_ret, std::move(buffer));
-        });
+        io_uring.read_fixed(client_socket, buffer_view, 0,
+                            [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+                                read_callback(syscall_ret, std::move(buffer));
+                            });
         return;
     }
 
     if (syscall_ret == 0) {
         LOG_DEBUG(logger, "Read NULL message");
-        io_uring.read(client_socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-            read_callback(syscall_ret, std::move(buffer));
-        });
+        io_uring.read_fixed(client_socket, buffer_view, 0,
+                            [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+                                read_callback(syscall_ret, std::move(buffer));
+                            });
         return;
     }
 
@@ -83,7 +85,7 @@ void Server::read_callback(int syscall_ret, std::unique_ptr<std::array<char, set
         default:
             assert(false);
     }
-    io_uring.read(client_socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+    io_uring.read_fixed(client_socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
         read_callback(syscall_ret, std::move(buffer));
     });
 }
@@ -163,13 +165,13 @@ void Server::start(const std::string& address) {
     io_uring.accept(socket, [this](int32_t syscall_ret) {
         if (client_socket = syscall_ret; client_socket >= 0) {
             LOG_INFO(logger, "Accepted a connection");
-            auto buffer = std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>{
-                new (std::align_val_t(16)) std::array<char, settings::MAX_MESSAGE_SIZE>()};
+            auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>();
+            io_uring.register_buffer(*buffer);
             auto buffer_view = std::span{buffer->data(), buffer->size()};
-            io_uring.read(client_socket, buffer_view, 0,
-                          [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-                              read_callback(syscall_ret, std::move(buffer));
-                          });
+            io_uring.read_fixed(client_socket, buffer_view, 0,
+                                [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+                                    read_callback(syscall_ret, std::move(buffer));
+                                });
         } else {
             LOG_ERROR(logger, "Error accepting a connection {}", std::strerror(-syscall_ret));
         }

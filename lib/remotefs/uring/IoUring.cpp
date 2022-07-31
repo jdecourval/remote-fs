@@ -41,3 +41,9 @@ void remotefs::IoUring::queue_wait() {
     }
     io_uring_cq_advance(&ring, completed);
 }
+
+void remotefs::IoUring::register_buffer(std::span<char> buffer) {
+    auto buffer_descriptor = iovec{.iov_base = buffer.data(), .iov_len = buffer.size()};
+
+    io_uring_register_buffers(&ring, &buffer_descriptor, 1);
+}
