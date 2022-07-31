@@ -27,6 +27,7 @@ class Client {
 
    private:
     void read_callback(int syscall_ret, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer);
+    void fuse_callback(int syscall_ret, std::unique_ptr<char[]>&& buffer);
     quill::Logger* logger;
     int socket = 0;
     struct fuse_session* fuse_session;

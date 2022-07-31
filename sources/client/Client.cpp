@@ -44,6 +44,7 @@ Client::Client(int argc, char *argv[])
                 conn->max_background = 100;
                 conn->max_readahead = 1024 * 1024 * 1024;
                 conn->max_read = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::MAX_PAYLOAD_SIZE;
+                conn->max_write = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::MAX_PAYLOAD_SIZE;
             },
         .lookup =
             [](fuse_req_t req, fuse_ino_t parent, const char *name) {
@@ -209,6 +210,16 @@ void Client::read_callback(int syscall_ret, std::unique_ptr<std::array<char, set
     });
 }
 
+void Client::fuse_callback(int syscall_ret, std::unique_ptr<char[]> &&buffer) {
+    if (syscall_ret <= 0 && syscall_ret != -EINTR) {
+        throw std::system_error(-syscall_ret, std::generic_category(), "fuse reading failure");
+    } else if (syscall_ret <= 0) {
+        return;
+    }
+    auto fuse_buffer = fuse_buf{.size = static_cast<size_t>(syscall_ret), .mem = buffer.get()};
+    fuse_session_process_buf(fuse_session, &fuse_buffer);
+}
+
 void Client::start(const std::string &address) {
     class GetAddrInfoErrorCategory : public std::error_category {
         [[nodiscard]] const char *name() const noexcept override {
@@ -245,30 +256,28 @@ void Client::start(const std::string &address) {
 
     fuse_daemonize(foreground);
 
-    io_uring.add_fd(fuse_session_fd(fuse_session), [this](auto ret) {
-        LOG_TRACE_L2(logger, "Fuse file description is having activity: {}", ret);
-        assert(ret == 1);
-        struct pollfd fds[1];
-
-        fds[0].fd = fuse_session_fd(fuse_session);
-        fds[0].events = POLLIN;
-        while (poll(fds, 1, 0) > 0) {
-            auto fbuf = fuse_buf{};
-            auto res = fuse_session_receive_buf(fuse_session, &fbuf);
-
-            if (res <= 0 && res != -EINTR) {
-                throw std::runtime_error("?");
-            }
-            fuse_session_process_buf(fuse_session, &fbuf);
-        };
-    });
-
-    auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>();
-    assert(reinterpret_cast<uintptr_t>(buffer.get()) % 8 == 0);
-    auto buffer_view = std::span{buffer->data(), buffer->size()};
-    io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-        read_callback(syscall_ret, std::move(buffer));
-    });
+    {
+        io_uring.add_fd(fuse_session_fd(fuse_session), [this](auto ret) mutable {
+            const auto FUSE_BUFFER_HEADER_SIZE = 0x1000;
+            const auto FUSE_MAX_MAX_PAGES = 256;
+            auto page_size = sysconf(_SC_PAGESIZE);
+            const auto bufsize = static_cast<size_t>(FUSE_MAX_MAX_PAGES * page_size + FUSE_BUFFER_HEADER_SIZE);
+            auto buffer = std::unique_ptr<char[]>{new char[bufsize]};
+            auto buffer_view = std::span{buffer.get(), bufsize};
+            io_uring.read(fuse_session_fd(fuse_session), buffer_view, 0,
+                          [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+                              fuse_callback(syscall_ret, std::move(buffer));
+                          });
+        });
+    }
+    {
+        auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>();
+        assert(reinterpret_cast<uintptr_t>(buffer.get()) % 8 == 0);
+        auto buffer_view = std::span{buffer->data(), buffer->size()};
+        io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+            read_callback(syscall_ret, std::move(buffer));
+        });
+    }
 
     while (!fuse_session_exited(fuse_session)) {
         io_uring.queue_wait();
