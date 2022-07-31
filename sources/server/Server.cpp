@@ -136,7 +136,8 @@ void Server::start(const std::string& address) {
     io_uring.accept(socket, [this](int32_t syscall_ret) {
         if (client_socket = syscall_ret; client_socket >= 0) {
             LOG_INFO(logger, "Accepted a connection");
-            auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>();
+            auto buffer = std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>{
+                new (std::align_val_t(16)) std::array<char, settings::MAX_MESSAGE_SIZE>()};
             auto buffer_view = std::span{buffer->data(), buffer->size()};
             io_uring.read(client_socket, buffer_view, 0,
                           [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {

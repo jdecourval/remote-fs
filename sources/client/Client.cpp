@@ -271,7 +271,8 @@ void Client::start(const std::string &address) {
         });
     }
     {
-        auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>();
+        auto buffer = std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>{
+            new (std::align_val_t(16)) std::array<char, settings::MAX_MESSAGE_SIZE>()};
         assert(reinterpret_cast<uintptr_t>(buffer.get()) % 8 == 0);
         auto buffer_view = std::span{buffer->data(), buffer->size()};
         io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
