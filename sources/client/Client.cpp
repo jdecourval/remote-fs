@@ -210,7 +210,7 @@ void Client::read_callback(int syscall_ret, std::unique_ptr<std::array<char, set
     });
 }
 
-void Client::fuse_callback(int syscall_ret, std::unique_ptr<char[]> &&buffer) {
+void Client::fuse_callback(int syscall_ret, std::unique_ptr<char[]> &&buffer, size_t bufsize) {
     if (syscall_ret <= 0 && syscall_ret != -EINTR) {
         throw std::system_error(-syscall_ret, std::generic_category(), "fuse reading failure");
     } else if (syscall_ret <= 0) {
@@ -218,6 +218,11 @@ void Client::fuse_callback(int syscall_ret, std::unique_ptr<char[]> &&buffer) {
     }
     auto fuse_buffer = fuse_buf{.size = static_cast<size_t>(syscall_ret), .mem = buffer.get()};
     fuse_session_process_buf(fuse_session, &fuse_buffer);
+    auto buffer_view = std::span{buffer.get(), bufsize};
+    io_uring.read(fuse_session_fd(fuse_session), buffer_view, 0,
+                  [this, bufsize, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+                      fuse_callback(syscall_ret, std::move(buffer), bufsize);
+                  });
 }
 
 void Client::start(const std::string &address) {
@@ -257,18 +262,16 @@ void Client::start(const std::string &address) {
     fuse_daemonize(foreground);
 
     {
-        io_uring.add_fd(fuse_session_fd(fuse_session), [this](auto ret) mutable {
-            const auto FUSE_BUFFER_HEADER_SIZE = 0x1000;
-            const auto FUSE_MAX_MAX_PAGES = 256;
-            auto page_size = sysconf(_SC_PAGESIZE);
-            const auto bufsize = static_cast<size_t>(FUSE_MAX_MAX_PAGES * page_size + FUSE_BUFFER_HEADER_SIZE);
-            auto buffer = std::unique_ptr<char[]>{new char[bufsize]};
-            auto buffer_view = std::span{buffer.get(), bufsize};
-            io_uring.read(fuse_session_fd(fuse_session), buffer_view, 0,
-                          [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-                              fuse_callback(syscall_ret, std::move(buffer));
-                          });
-        });
+        const auto FUSE_BUFFER_HEADER_SIZE = 0x1000;
+        const auto FUSE_MAX_MAX_PAGES = 256;
+        auto page_size = sysconf(_SC_PAGESIZE);
+        const auto bufsize = static_cast<size_t>(FUSE_MAX_MAX_PAGES * page_size + FUSE_BUFFER_HEADER_SIZE);
+        auto buffer = std::unique_ptr<char[]>{new char[bufsize]};
+        auto buffer_view = std::span{buffer.get(), bufsize};
+        io_uring.read(fuse_session_fd(fuse_session), buffer_view, 0,
+                      [this, bufsize, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+                          fuse_callback(syscall_ret, std::move(buffer), bufsize);
+                      });
     }
     {
         auto buffer = std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>{
