@@ -16,7 +16,7 @@
 namespace remotefs {
 
 class IoUring {
-    static const auto queue_depth = 16;
+    static const auto queue_depth = 32;
     static const auto wait_min_batch_size = 1;
     static const auto wait_max_batch_size = 100;
     static const auto wait_timeout_s = 1;

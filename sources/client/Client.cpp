@@ -261,7 +261,7 @@ void Client::start(const std::string &address) {
 
     fuse_daemonize(foreground);
 
-    {
+    for (auto i = 0; i < 2; i++) {
         const auto FUSE_BUFFER_HEADER_SIZE = 0x1000;
         const auto FUSE_MAX_MAX_PAGES = 256;
         auto page_size = sysconf(_SC_PAGESIZE);
