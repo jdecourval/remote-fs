@@ -1,6 +1,7 @@
 #include "Server.h"
 
 #include <netdb.h>
+#include <netinet/sctp.h>
 #include <quill/Quill.h>
 
 #include <memory>
@@ -99,7 +100,7 @@ void Server::start(const std::string& address) {
 
     LOG_INFO(logger, "Binding to {}", address);
     struct addrinfo hosthints {
-        .ai_flags = AI_PASSIVE, .ai_family = AF_INET, .ai_socktype = SOCK_DCCP, .ai_protocol = IPPROTO_DCCP
+        .ai_flags = AI_PASSIVE, .ai_family = AF_INET, .ai_socktype = SOCK_STREAM, .ai_protocol = IPPROTO_SCTP
     };
     struct addrinfo* hostinfo;  // TODO: unique_ptr with freeaddrinfo
     if (auto ret = getaddrinfo(address.c_str(), "5001", &hosthints, &hostinfo); ret < 0) {
@@ -114,6 +115,32 @@ void Server::start(const std::string& address) {
     const auto enable = 1;
     if (setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
         throw std::system_error(errno, std::system_category(), "Failed to set REUSEADDR");
+
+    const auto MAX_STREAM = 64;
+    struct sctp_initmsg initmsg {};
+    initmsg.sinit_num_ostreams = MAX_STREAM;
+    initmsg.sinit_max_instreams = MAX_STREAM;
+    if (setsockopt(socket, IPPROTO_SCTP, SCTP_INITMSG, &initmsg, sizeof(struct sctp_initmsg)) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to configure sctp init message");
+    }
+
+    auto sctp_flags = sctp_sndrcvinfo{};
+    socklen_t sctp_flags_size = sizeof(sctp_flags);
+    if (getsockopt(socket, IPPROTO_SCTP, SCTP_DEFAULT_SEND_PARAM, &sctp_flags, &sctp_flags_size) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to get default SCTP options");
+    }
+    sctp_flags.sinfo_flags |= SCTP_UNORDERED;
+    if (setsockopt(socket, IPPROTO_SCTP, SCTP_DEFAULT_SEND_PARAM, &sctp_flags, (socklen_t)sizeof(sctp_flags)) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to configure SCTP default send options");
+    }
+
+    int disable = 1;
+    if (setsockopt(socket, IPPROTO_SCTP, SCTP_DISABLE_FRAGMENTS, &disable, (socklen_t)sizeof(disable)) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to disable SCTP fragments");
+    }
+    if (setsockopt(socket, IPPROTO_SCTP, SCTP_NODELAY, &disable, (socklen_t)sizeof(disable)) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to disable nagle's algorithm");
+    }
 
     if (::bind(socket, hostinfo->ai_addr, hostinfo->ai_addrlen) < 0) {
         throw std::system_error(errno, std::system_category(), "Failed to bind socket");

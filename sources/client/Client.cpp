@@ -1,7 +1,7 @@
 #include "Client.h"
 
-#include <linux/dccp.h>
 #include <netdb.h>
+#include <netinet/sctp.h>
 #include <quill/Quill.h>
 
 #include <memory>
@@ -40,9 +40,9 @@ Client::Client(int argc, char *argv[])
     const struct fuse_lowlevel_ops fuse_ops = {
         .init =
             [](void *, struct fuse_conn_info *conn) {
-                //                conn->want |= ((FUSE_CAP_SPLICE_MOVE | FUSE_CAP_SPLICE_WRITE) & conn->capable);
-                conn->max_background = 100;
-                conn->max_readahead = 1024 * 1024 * 1024;
+                conn->max_background = std::numeric_limits<decltype(conn->max_background)>::max();
+                ;
+                conn->max_readahead = std::numeric_limits<decltype(conn->max_readahead)>::max();
                 conn->max_read = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::MAX_PAYLOAD_SIZE;
                 conn->max_write = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::MAX_PAYLOAD_SIZE;
             },
@@ -130,6 +130,30 @@ Client::Client(int argc, char *argv[])
     fuse_opt_free_args(&args);
 }
 
+template <typename... Ts>
+void fuse_reply_data(IoUring &uring, fuse_session &fuse, fuse_req_t req, std::span<char> data, Ts &&...keep_alive) {
+    auto out_headers = std::make_unique<fuse_out_header>();
+
+    auto buffers = std::unique_ptr<std::array<iovec, 2>>{
+        new std::array<iovec, 2>{iovec{out_headers.get(), sizeof(*out_headers)}, iovec{data.data(), data.size()}}};
+
+    out_headers->unique = reinterpret_cast<const uint64_t *>(req)[1];
+    out_headers->error = 0;
+    out_headers->len = (*buffers)[0].iov_len + (*buffers)[1].iov_len;
+
+    auto buffer_view = std::span{*buffers};
+    uring.write_vector(fuse_session_fd(&fuse), buffer_view,
+                       [req, buffers = std::move(buffers), out_headers = std::move(out_headers),
+                        ... keep_alive = std::forward<Ts>(keep_alive)](int ret) {
+                           if (ret > 0) {
+                               // This calls fuse_free_req without any other effect.
+                               fuse_reply_none(req);
+                           } else {
+                               fuse_reply_err(req, -ret);
+                           };
+                       });
+}
+
 void Client::read_callback(int syscall_ret, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>> &&buffer) {
     auto buffer_view = std::span{buffer->data(), buffer->size()};
 
@@ -182,15 +206,8 @@ void Client::read_callback(int syscall_ret, std::unique_ptr<std::array<char, set
             //                            assert(msg.size() <= settings::MAX_MESSAGE_SIZE);
             LOG_DEBUG(logger, "Received FuseReplyBuf, req={}, size={}", reinterpret_cast<uint64_t>(msg.req),
                       msg.data_size);
-            auto buf_vec = fuse_bufvec{.count = 1,
-                                       .idx = 0,
-                                       .off = 0,
-                                       .buf = {{.size = static_cast<size_t>(msg.data_size),
-                                                .flags = static_cast<fuse_buf_flags>(0),
-                                                .mem = msg.data.data()}}};
-            if (auto ret = fuse_reply_data(msg.req, &buf_vec, FUSE_BUF_SPLICE_MOVE); ret < 0) {
-                throw std::system_error(-ret, std::generic_category(), "fuse_reply_data failure");
-            }
+            fuse_reply_data(io_uring, *fuse_session, msg.req, {msg.data.data(), static_cast<size_t>(msg.data_size)},
+                            std::move(buffer));
             break;
         }
         case 5: {
@@ -204,6 +221,10 @@ void Client::read_callback(int syscall_ret, std::unique_ptr<std::array<char, set
         }
         default:
             assert(false);
+    }
+    if (!buffer) {
+        buffer.reset(new std::array<char, settings::MAX_MESSAGE_SIZE>());
+        buffer_view = std::span{buffer->data(), buffer->size()};
     }
     io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
         read_callback(syscall_ret, std::move(buffer));
@@ -237,7 +258,7 @@ void Client::start(const std::string &address) {
 
     LOG_INFO(logger, "Opening connection to {}", address);
     struct addrinfo hosthints {
-        .ai_family = AF_INET, .ai_socktype = SOCK_DCCP, .ai_protocol = IPPROTO_DCCP
+        .ai_family = AF_INET, .ai_socktype = SOCK_STREAM, .ai_protocol = IPPROTO_SCTP
     };
     struct addrinfo *hostinfo;  // TODO: unique_ptr with freeaddrinfo
     if (auto ret = getaddrinfo(address.c_str(), "5001", &hosthints, &hostinfo); ret < 0) {
@@ -249,15 +270,35 @@ void Client::start(const std::string &address) {
         throw std::system_error(errno, std::system_category(), "Failed to configure socket");
     }
 
+    const auto MAX_STREAM = 64;
+    struct sctp_initmsg initmsg {
+        .sinit_num_ostreams = MAX_STREAM, .sinit_max_instreams = MAX_STREAM,
+    };
+    if (setsockopt(socket, IPPROTO_SCTP, SCTP_INITMSG, &initmsg, sizeof(struct sctp_initmsg)) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to configure sctp init message");
+    }
+
+    auto sctp_flags = sctp_sndrcvinfo{};
+    socklen_t sctp_flags_size = sizeof(sctp_flags);
+    if (getsockopt(socket, IPPROTO_SCTP, SCTP_DEFAULT_SEND_PARAM, &sctp_flags, &sctp_flags_size) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to get default SCTP options");
+    }
+    sctp_flags.sinfo_flags |= SCTP_UNORDERED;
+    if (setsockopt(socket, IPPROTO_SCTP, SCTP_DEFAULT_SEND_PARAM, &sctp_flags, (socklen_t)sizeof(sctp_flags)) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to configure SCTP default send options");
+    }
+
+    int disable = 1;
+    if (setsockopt(socket, IPPROTO_SCTP, SCTP_DISABLE_FRAGMENTS, &disable, (socklen_t)sizeof(disable)) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to disable SCTP fragments");
+    }
+    if (setsockopt(socket, IPPROTO_SCTP, SCTP_NODELAY, &disable, (socklen_t)sizeof(disable)) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to disable nagle's algorithm");
+    }
+
     if (connect(socket, hostinfo->ai_addr, hostinfo->ai_addrlen) < 0) {
         throw std::system_error(errno, std::system_category(), "Failed to connect socket");
     }
-    int mps;
-    socklen_t mps_size = sizeof(mps);
-    if (getsockopt(socket, SOL_DCCP, DCCP_SOCKOPT_GET_CUR_MPS, &mps, &mps_size) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to get current maximum packet size");
-    }
-    LOG_INFO(logger, "Maximum packet size: {}", mps);
 
     fuse_daemonize(foreground);
 

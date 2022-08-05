@@ -233,7 +233,6 @@ void Syscalls::open(messages::requests::Open& message, int socket) {
         InodeCache::open(inode);  // TODO: Handle errors
         auto response = std::make_unique<messages::responses::FuseReplyOpen>(
             messages::responses::FuseReplyOpen{message.req, file_info});
-        response->file_info.direct_io = 1;
         auto response_view = std::span{reinterpret_cast<char*>(response.get()), sizeof(*response)};
         LOG_TRACE_L2(logger, "Sending FuseReplyOpen");
         uring.write(socket, response_view, [response = std::move(response)](int) {});

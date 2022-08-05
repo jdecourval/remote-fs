@@ -33,7 +33,6 @@ class Client {
     struct fuse_session* fuse_session;
     bool foreground;
     IoUring io_uring;
-    volatile int read_counter = 0;
 };
 }  // namespace remotefs
 
