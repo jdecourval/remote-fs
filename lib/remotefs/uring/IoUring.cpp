@@ -32,8 +32,8 @@ void remotefs::IoUring::queue_peek() {
 }
 
 void remotefs::IoUring::queue_wait() {
-    auto cqes = std::array<io_uring_cqe*, wait_max_batch_size>{};
-    auto timeout = timespec{wait_timeout_s, 0};
+    auto cqes = std::array<io_uring_cqe*, wait_min_batch_size>{};
+    auto timeout = timespec{wait_timeout_s, wait_timeout_ns};
     if (int ret = io_uring_submit_and_wait_timeout(&ring, cqes.data(), wait_min_batch_size,
                                                    reinterpret_cast<__kernel_timespec*>(&timeout), nullptr);
         ret == -ETIME || ret == -EINTR) [[unlikely]] {

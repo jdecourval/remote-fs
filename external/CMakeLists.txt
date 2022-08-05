@@ -46,3 +46,6 @@ IgnoreWarnings(argparse)
 #------------------------------------------------------------------------------
 #  liburing - io_uring library
 pkg_check_modules(liburing REQUIRED IMPORTED_TARGET GLOBAL liburing)
+
+
+add_subdirectory(fuse3)

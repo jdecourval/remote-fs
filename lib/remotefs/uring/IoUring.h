@@ -16,10 +16,10 @@
 namespace remotefs {
 
 class IoUring {
-    static const auto queue_depth = 32;
+    static const auto queue_depth = 256;
     static const auto wait_min_batch_size = 1;
-    static const auto wait_max_batch_size = 100;
     static const auto wait_timeout_s = 1;
+    static const auto wait_timeout_ns = 0;
 
    public:
     struct CallbackErased {
@@ -56,6 +56,9 @@ class IoUring {
 
     template <typename Callable>
     void write(int fd, std::span<char> source, Callable&& callable);
+
+    template <typename Callable, size_t size>
+    void write_vector(int fd, std::span<iovec, size> sources, Callable&& callable);
 
     void queue_peek();
     void queue_wait();
@@ -110,6 +113,15 @@ void IoUring::write(int fd, std::span<char> source, Callable&& callable) {
     auto callback = new CallbackWithPointer<Callable>{std::forward<Callable>(callable)};
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
         io_uring_prep_write(sqe, fd, source.data(), source.size(), 0);
+        io_uring_sqe_set_data(sqe, callback);
+    }
+}
+
+template <typename Callable, size_t size>
+void IoUring::write_vector(int fd, std::span<iovec, size> sources, Callable&& callable) {
+    auto callback = new CallbackWithPointer<Callable>{std::forward<Callable>(callable)};
+    if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
+        io_uring_prep_writev(sqe, fd, sources.data(), sources.size(), 0);
         io_uring_sqe_set_data(sqe, callback);
     }
 }

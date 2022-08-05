@@ -15,6 +15,7 @@ target_link_libraries(remote-fs-client PUBLIC
         remotefs::remotefs
         PkgConfig::fuse
         quill::quill
+        fuse-kernel
         )
 
 target_compile_definitions(remote-fs-client PRIVATE
