@@ -60,9 +60,7 @@ class IoUring {
     template <typename Callable, size_t size>
     void write_vector(int fd, std::span<iovec, size> sources, Callable&& callable);
 
-    void queue_peek();
     void queue_wait();
-    void submit();
 
    private:
     io_uring ring;

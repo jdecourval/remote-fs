@@ -16,21 +16,6 @@ remotefs::IoUring::~IoUring() {
     io_uring_queue_exit(&ring);
 }
 
-void remotefs::IoUring::queue_peek() {
-    struct io_uring_cqe* cqe;
-    if (auto ret = io_uring_peek_cqe(&ring, &cqe); ret == 0) [[likely]] {
-        auto callback = reinterpret_cast<CallbackErased*>(io_uring_cqe_get_data(cqe));
-        (*callback)(cqe->res);
-        io_uring_cqe_seen(&ring, cqe);
-        if (!(cqe->flags & IORING_CQE_F_MORE)) {
-            delete callback;
-        }
-    } else if (ret == -EAGAIN) {
-    } else {
-        throw std::system_error(-ret, std::generic_category(), "Queue peek. Not possible.");
-    }
-}
-
 void remotefs::IoUring::queue_wait() {
     auto cqes = std::array<io_uring_cqe*, wait_min_batch_size>{};
     auto timeout = timespec{wait_timeout_s, wait_timeout_ns};
@@ -55,8 +40,4 @@ void remotefs::IoUring::queue_wait() {
         }
     }
     io_uring_cq_advance(&ring, completed);
-}
-
-void remotefs::IoUring::submit() {
-    //    io_uring_submit(&ring);
 }
