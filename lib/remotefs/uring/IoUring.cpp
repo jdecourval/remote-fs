@@ -9,6 +9,9 @@ remotefs::IoUring::IoUring() {
     if (auto ret = io_uring_queue_init(queue_depth, &ring, 0); ret < 0) {
         throw std::system_error(-ret, std::generic_category(), "Queue initialization");
     }
+    if (auto ret = io_uring_register_ring_fd(&ring); ret < 0) {
+        throw std::system_error(-ret, std::generic_category(), "Failed to register queue fd");
+    }
 }
 #pragma clang diagnostic pop
 
