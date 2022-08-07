@@ -131,28 +131,29 @@ Client::Client(int argc, char *argv[])
     fuse_opt_free_args(&args);
 }
 
-template <typename... Ts>
-void fuse_reply_data(IoUring &uring, fuse_session &fuse, fuse_req_t req, std::span<char> data, Ts &&...keep_alive) {
-    auto out_headers = std::make_unique<fuse_out_header>();
+void Client::fuse_reply_data(std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>> &&buffer) {
+    using msg_t = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>;
+    auto &msg = *reinterpret_cast<msg_t *>(buffer->data());
+    auto req = msg.req;
+    // TODO:size Cleanup this hack, it is still a strict aliasing violation.
+    static_assert(sizeof(fuse_out_header) + msg_t::MAX_PAYLOAD_SIZE < sizeof(msg_t));
+    auto *headers = reinterpret_cast<fuse_out_header *>(msg.data.data() - sizeof(fuse_out_header));
+    assert(static_cast<void *>(headers) >= buffer.get());
+    auto size = static_cast<uint32_t>(sizeof(*headers) + msg.data_size);
+    auto headers_to_copy =
+        fuse_out_header{.len = size, .error = 0, .unique = reinterpret_cast<const uint64_t *>(msg.req)[1]};
+    std::memcpy(headers, &headers_to_copy, sizeof(headers_to_copy));
 
-    auto buffers = std::unique_ptr<std::array<iovec, 2>>{
-        new std::array<iovec, 2>{iovec{out_headers.get(), sizeof(*out_headers)}, iovec{data.data(), data.size()}}};
-
-    out_headers->unique = reinterpret_cast<const uint64_t *>(req)[1];
-    out_headers->error = 0;
-    out_headers->len = (*buffers)[0].iov_len + (*buffers)[1].iov_len;
-
-    auto buffer_view = std::span{*buffers};
-    uring.write_vector(fuse_session_fd(&fuse), buffer_view,
-                       [req, buffers = std::move(buffers), out_headers = std::move(out_headers),
-                        ... keep_alive = std::forward<Ts>(keep_alive)](int ret) {
-                           if (ret > 0) {
-                               // This calls fuse_free_req without any other effect.
-                               fuse_reply_none(req);
-                           } else {
-                               fuse_reply_err(req, -ret);
-                           };
-                       });
+    auto buffer_view = std::span{reinterpret_cast<char *>(headers), size};
+    io_uring.write(fuse_session_fd(fuse_session), buffer_view, [req, buffer = std::move(buffer)](int ret) {
+        auto &msg = *reinterpret_cast<msg_t *>(buffer->data());
+        if (ret > 0) {
+            // This calls fuse_free_req without any other effect.
+            fuse_reply_none(req);
+        } else {
+            fuse_reply_err(req, -ret);
+        };
+    });
 }
 
 void Client::read_callback(int syscall_ret, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>> &&buffer) {
@@ -202,13 +203,7 @@ void Client::read_callback(int syscall_ret, std::unique_ptr<std::array<char, set
             break;
         }
         case 4: {
-            auto &msg =
-                *reinterpret_cast<messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE> *>(buffer->data());
-            //                            assert(msg.size() <= settings::MAX_MESSAGE_SIZE);
-            LOG_DEBUG(logger, "Received FuseReplyBuf, req={}, size={}", reinterpret_cast<uint64_t>(msg.req),
-                      msg.data_size);
-            fuse_reply_data(io_uring, *fuse_session, msg.req, {msg.data.data(), static_cast<size_t>(msg.data_size)},
-                            std::move(buffer));
+            fuse_reply_data(std::move(buffer));
             break;
         }
         case 5: {
@@ -317,7 +312,7 @@ void Client::start(const std::string &address) {
     }
     {
         auto buffer = std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>{
-            new (std::align_val_t(16)) std::array<char, settings::MAX_MESSAGE_SIZE>()};
+            new std::array<char, settings::MAX_MESSAGE_SIZE>()};
         assert(reinterpret_cast<uintptr_t>(buffer.get()) % 8 == 0);
         auto buffer_view = std::span{buffer->data(), buffer->size()};
         io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
