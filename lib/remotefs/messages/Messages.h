@@ -98,8 +98,8 @@ struct FuseReplyBuf {
           data_size{d} {}
 
     const uint8_t tag = 4;
-    fuse_req_t req;
     int data_size{};
+    fuse_req_t req;
     // TODO: This is wrong, as it ignores padding
     // TODO: 8 for vtable: remove! 20=hack for missing paddings
     static constexpr int MAX_PAYLOAD_SIZE = max_size - sizeof(tag) - sizeof(data_size) - 8 - 20;
