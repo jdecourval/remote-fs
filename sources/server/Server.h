@@ -18,11 +18,12 @@ class Server {
    public:
     explicit Server(bool metrics_on_stop = false);
     void start(const std::string& address);
-    void read_callback(int syscall_ret, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer);
+    void read_callback(int syscall_ret, int client_socket,
+                       std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer);
+    void accept_callback(int syscall_ret);
 
    private:
     int socket = 0;
-    int client_socket = 0;
     quill::Logger* logger;
     MetricRegistry<settings::DISABLE_METRICS> metric_registry;
     Syscalls syscalls;
