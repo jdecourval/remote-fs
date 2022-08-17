@@ -115,7 +115,7 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
     const auto& root_entry = inode_cache.inode_from_ino(ino);
 
     if (off == 1) {  // off must start at 1
-        LOG_TRACE_L2(logger, "Adding . to buffer");
+        LOG_TRACE_L3(logger, "Adding . to buffer");
         auto free_space = response->free_space();
         auto entry_size = fuse_add_direntry(nullptr, response->data.data() + response->data_size,
                                             response->free_space(), ".", &root_entry.second.stat, off);
@@ -136,7 +136,7 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
 
     if (off == 2) {
         auto permissions = std::filesystem::status("..").permissions();
-        LOG_TRACE_L2(logger, "Adding .. to buffer");
+        LOG_TRACE_L3(logger, "Adding .. to buffer");
         auto free_space = response->free_space();
         struct stat stbuf = {};
         // Other fields are not currently used by fuse
@@ -162,7 +162,7 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
     for (const auto& entry : std::next(std::filesystem::directory_iterator{std::filesystem::path{root_entry.first}},
                                        std::max(0l, off - 3))) {
         auto filename = entry.path().filename();
-        LOG_TRACE_L2(logger, "Adding {} to buffer at offset {}", filename, off);
+        LOG_TRACE_L3(logger, "Adding {} to buffer at offset {}", filename, off);
         auto free_space = response->free_space();
         auto permissions = entry.status().permissions();
         struct stat stbuf {};
@@ -212,7 +212,11 @@ void Syscalls::read(messages::requests::Read& message, int socket) {
             auto response_view = std::span{reinterpret_cast<char*>(response.get()), response->size()};
             LOG_TRACE_L2(logger, "Sending FuseReplyBuf req={}, size={}", reinterpret_cast<uintptr_t>(response->req),
                          response->data_size);
-            uring.write(socket, response_view, [response = std::move(response)](int) {});
+            uring.write(socket, response_view, [response = std::move(response)](int ret) {
+                if (ret < 0) {
+                    throw std::system_error(-ret, std::system_category(), "Failed to write to socket");
+                }
+            });
         } else {
             auto error_response = std::make_unique<messages::responses::FuseReplyErr>(
                 messages::responses::FuseReplyErr{response->req, -ret});
