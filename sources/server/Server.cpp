@@ -35,6 +35,7 @@ Server::Server(bool metrics_on_stop)
       _metrics_on_stop{metrics_on_stop} {
     std::signal(SIGUSR1, signal_usr1_handler);
     std::signal(SIGTERM, signal_term_handler);
+    std::signal(SIGPIPE, SIG_IGN);
 }
 
 void Server::accept_callback(int syscall_ret) {
@@ -51,7 +52,6 @@ void Server::accept_callback(int syscall_ret) {
     } else {
         LOG_ERROR(logger, "Error accepting a connection {}", std::strerror(-syscall_ret));
     }
-    io_uring.accept(socket, [this](int32_t syscall_ret) { accept_callback(syscall_ret); });
 }
 
 void Server::read_callback(int syscall_ret, int client_socket,
@@ -59,7 +59,13 @@ void Server::read_callback(int syscall_ret, int client_socket,
     auto buffer_view = std::span{buffer->data(), buffer->size()};
 
     if (syscall_ret < 0) {
-        LOG_ERROR(logger, "Read failed: {}", std::strerror(-syscall_ret));
+        if (syscall_ret == -ECONNRESET) {
+            LOG_INFO(logger, "Connection reset by peer. Closing socket.");
+            close(client_socket);
+            return;
+        }
+
+        LOG_ERROR(logger, "Read failed, retrying: {}", std::strerror(-syscall_ret));
         io_uring.read(client_socket, buffer_view, 0,
                       [this, client_socket, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
                           read_callback(syscall_ret, client_socket, std::move(buffer));
@@ -68,11 +74,8 @@ void Server::read_callback(int syscall_ret, int client_socket,
     }
 
     if (syscall_ret == 0) {
-        LOG_DEBUG(logger, "Read NULL message");
-        io_uring.read(client_socket, buffer_view, 0,
-                      [this, client_socket, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-                          read_callback(syscall_ret, client_socket, std::move(buffer));
-                      });
+        LOG_INFO(logger, "End of file detected. Closing socket.");
+        close(client_socket);
         return;
     }
 

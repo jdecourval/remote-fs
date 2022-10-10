@@ -39,7 +39,11 @@ class IoUring {
         Callable callable;
     };
 
-    IoUring();
+    explicit IoUring(bool register_ring_fd = true);
+    IoUring(IoUring&& source) = default;
+    IoUring& operator=(IoUring&& source) = default;
+    IoUring(const IoUring& source) = delete;
+    IoUring& operator=(const IoUring& source) = delete;
     ~IoUring();
 
     template <typename Callable>
@@ -58,10 +62,10 @@ class IoUring {
     void read_fixed(int fd, std::span<char> destination, size_t offset, Callable&& callable);
 
     template <typename Callable>
-    void write(int fd, std::span<char> source, Callable&& callable);
+    void write(int fd, std::span<const char> source, Callable&& callable);
 
     template <typename Callable, size_t size>
-    void write_vector(int fd, std::span<iovec, size> sources, Callable&& callable);
+    void write_vector(int fd, std::span<const iovec, size> sources, Callable&& callable);
 
     void queue_wait();
 
@@ -97,7 +101,7 @@ template <typename Callable>
 void IoUring::accept(int socket, Callable&& callable) {
     auto callback = new CallbackWithPointer<Callable>{std::forward<Callable>(callable)};
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
-        io_uring_prep_accept(sqe, socket, nullptr, nullptr, 0);
+        io_uring_prep_multishot_accept(sqe, socket, nullptr, nullptr, 0);
         io_uring_sqe_set_data(sqe, callback);
     }
 }
@@ -121,7 +125,7 @@ void IoUring::read_fixed(int fd, std::span<char> destination, size_t offset, Cal
 }
 
 template <typename Callable>
-void IoUring::write(int fd, std::span<char> source, Callable&& callable) {
+void IoUring::write(int fd, std::span<const char> source, Callable&& callable) {
     auto callback = new CallbackWithPointer<Callable>{std::forward<Callable>(callable)};
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
         io_uring_prep_write(sqe, fd, source.data(), source.size(), 0);
@@ -130,7 +134,7 @@ void IoUring::write(int fd, std::span<char> source, Callable&& callable) {
 }
 
 template <typename Callable, size_t size>
-void IoUring::write_vector(int fd, std::span<iovec, size> sources, Callable&& callable) {
+void IoUring::write_vector(int fd, std::span<const iovec, size> sources, Callable&& callable) {
     auto callback = new CallbackWithPointer<Callable>{std::forward<Callable>(callable)};
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
         io_uring_prep_writev(sqe, fd, sources.data(), sources.size(), 0);
