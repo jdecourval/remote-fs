@@ -1,4 +1,5 @@
 include(ConfigureCppProject)
+include(FindPkgConfig)
 
 add_library(remotefs
     remotefs/tools/FuseOp.h
@@ -14,18 +15,25 @@ add_library(remotefs
 
 set_target_properties(remotefs PROPERTIES LINKER_LANGUAGE CXX)
 
+pkg_check_modules(fuse REQUIRED IMPORTED_TARGET fuse3)
+
 target_include_directories(remotefs
-        PUBLIC .
-        )
+    PUBLIC .
+    )
 
 target_compile_options(remotefs PUBLIC
-        -Wno-pedantic  # Flexible array members
-        )
+    -Wno-pedantic  # Flexible array members
+    )
 
 target_link_libraries(remotefs PUBLIC
-        PkgConfig::liburing
-        )
+    PkgConfig::liburing
+    PkgConfig::fuse
+    )
 
+target_compile_definitions(remotefs PUBLIC
+    FUSE_USE_VERSION=35
+    _FILE_OFFSET_BITS=64
+    )
 
 add_library(remotefs::remotefs ALIAS remotefs)
 configure_cpp_project(remotefs)
