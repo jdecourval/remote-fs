@@ -1,15 +1,16 @@
 include(ConfigureCppProject)
 
 add_library(remotefs
-        remotefs/tools/FuseOp.h
-        remotefs/metrics/Metrics.h
-        remotefs/metrics/impl/Metrics.cpp
-        remotefs/inodecache/InodeCache.h
-        remotefs/inodecache/impl/InodeCache.cpp
-        remotefs/uring/IoUring.h
-        remotefs/messages/Messages.h
-        remotefs/uring/IoUring.cpp
-        )
+    remotefs/tools/FuseOp.h
+    remotefs/metrics/Metrics.h
+    remotefs/metrics/impl/MetricsEnabled.cpp
+    remotefs/metrics/impl/MetricsDisabled.cpp
+    remotefs/inodecache/InodeCache.h
+    remotefs/inodecache/impl/InodeCache.cpp
+    remotefs/uring/IoUring.h
+    remotefs/messages/Messages.h
+    remotefs/uring/IoUring.cpp
+    )
 
 set_target_properties(remotefs PROPERTIES LINKER_LANGUAGE CXX)
 
