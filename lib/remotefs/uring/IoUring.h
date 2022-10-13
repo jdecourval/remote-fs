@@ -40,8 +40,8 @@ class IoUring {
     };
 
     explicit IoUring(bool register_ring_fd = true);
-    IoUring(IoUring&& source) = default;
-    IoUring& operator=(IoUring&& source) = default;
+    IoUring(IoUring&& source) noexcept;
+    IoUring& operator=(IoUring&& source) noexcept;
     IoUring(const IoUring& source) = delete;
     IoUring& operator=(const IoUring& source) = delete;
     ~IoUring();
@@ -72,7 +72,7 @@ class IoUring {
     void register_buffer(std::span<char> buffer);
 
    private:
-    io_uring ring;
+    io_uring ring{};
 };
 
 template <typename Callable>

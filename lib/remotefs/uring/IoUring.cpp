@@ -5,29 +5,42 @@
 
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "cppcoreguidelines-pro-type-member-init"
-remotefs::IoUring::IoUring() {
+remotefs::IoUring::IoUring(bool register_ring_fd) {
     if (auto ret = io_uring_queue_init(queue_depth, &ring, 0); ret < 0) {
         throw std::system_error(-ret, std::generic_category(), "Queue initialization");
     }
-    if (auto ret = io_uring_register_ring_fd(&ring); ret < 0) {
-        throw std::system_error(-ret, std::generic_category(), "Failed to register queue fd");
+
+    if (register_ring_fd) {
+        if (auto ret = io_uring_register_ring_fd(&ring); ret < 0) {
+            throw std::system_error(-ret, std::generic_category(), "Failed to register queue fd");
+        }
     }
 }
 #pragma clang diagnostic pop
 
 remotefs::IoUring::~IoUring() {
-    io_uring_queue_exit(&ring);
+    if (ring.ring_fd != 0) {
+        io_uring_queue_exit(&ring);
+    }
+}
+
+remotefs::IoUring::IoUring(remotefs::IoUring&& source) noexcept {
+    std::swap(ring, source.ring);
+}
+
+remotefs::IoUring& remotefs::IoUring::operator=(remotefs::IoUring&& source) noexcept {
+    std::swap(ring, source.ring);
+    return *this;
 }
 
 void remotefs::IoUring::queue_wait() {
     auto cqes = std::array<io_uring_cqe*, wait_min_batch_size>{};
-    auto timeout = timespec{wait_timeout_s, wait_timeout_ns};
-    if (int ret = io_uring_submit_and_wait_timeout(&ring, cqes.data(), wait_min_batch_size,
-                                                   reinterpret_cast<__kernel_timespec*>(&timeout), nullptr);
+    auto timeout = __kernel_timespec{wait_timeout_s, wait_timeout_ns};
+    if (int ret = io_uring_submit_and_wait_timeout(&ring, cqes.data(), wait_min_batch_size, &timeout, nullptr);
         ret == -ETIME || ret == -EINTR) [[unlikely]] {
         return;
     } else if (ret < 0) [[unlikely]] {
-        throw std::system_error(-ret, std::generic_category(), "io_uring_wait_cqes failed");
+        throw std::system_error(-ret, std::generic_category(), "io_uring_submit_and_wait_timeout failed");
     }
 
     unsigned completed = 0;
