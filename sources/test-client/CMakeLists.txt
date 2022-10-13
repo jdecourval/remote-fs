@@ -1,25 +1,24 @@
 include(ConfigureCppProject)
 include(FindPkgConfig)
 
-add_executable(remote-fs-test-client
-        Main.cpp
-        )
+add_executable(test-client
+    Main.cpp
+    TestClient.cpp
+    TestClient.h
+    )
 
-target_link_libraries(remote-fs-client PUBLIC
-        remotefs::remotefs
-        quill::quill
-        )
+target_link_libraries(test-client PUBLIC
+    remotefs::remotefs
+    quill::quill
+    argparse::argparse
+    EngFormat-Cpp
+    )
 
-target_compile_definitions(remote-fs-client PRIVATE
-        FUSE_USE_VERSION=35
-        _FILE_OFFSET_BITS=64
-        )
+target_include_directories(test-client PRIVATE ..)
 
-target_include_directories(remote-fs-client PRIVATE ..)
+configure_cpp_project(test-client)
 
-configure_cpp_project(remote-fs-client)
-
-if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
-    message(STATUS "Disabling verbose logging for target remote-fs-client")
-    target_compile_definitions(remote-fs-client PRIVATE QUILL_ACTIVE_LOG_LEVEL=QUILL_LOG_LEVEL_INFO)
-endif ()
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message(STATUS "Disabling verbose logging for target test-client")
+    target_compile_definitions(test-client PRIVATE QUILL_ACTIVE_LOG_LEVEL=QUILL_LOG_LEVEL_INFO)
+endif()

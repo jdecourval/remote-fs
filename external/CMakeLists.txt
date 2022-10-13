@@ -37,15 +37,28 @@ FetchContent_Declare(
         GIT_REPOSITORY https://github.com/p-ranav/argparse.git
         GIT_TAG v2.6
         UPDATE_DISCONNECTED TRUE
-        GIT_SHALLOW TRUE
+    GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(argparse)
-IgnoreWarnings(argparse)
+fetchcontent_makeavailable(argparse)
+ignorewarnings(argparse)
 
 #------------------------------------------------------------------------------
 #  liburing - io_uring library
 pkg_check_modules(liburing REQUIRED IMPORTED_TARGET GLOBAL liburing)
+
+#------------------------------------------------------------------------------
+#  EngFormat-Cpp - C++ based Engineering Notation Formatter
+fetchcontent_declare(
+    EngFormat-Cpp
+    GIT_REPOSITORY https://github.com/DARMA-tasking/EngFormat-Cpp.git
+    GIT_TAG dc0668881f4ca7ddbc907bf568cfcac8d9026d6a
+    UPDATE_DISCONNECTED TRUE
+    GIT_SHALLOW TRUE
+)
+
+fetchcontent_makeavailable(EngFormat-Cpp)
+ignorewarnings(EngFormat-Cpp)
 
 
 add_subdirectory(fuse3)

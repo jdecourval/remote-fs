@@ -23,6 +23,7 @@ class Syscalls {
     void readdir(messages::requests::ReadDir& message, int socket);
     void read(messages::requests::Read& message, int socket);
     void release(messages::requests::Release& message);
+    void ping(std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer, int socket);
 
    private:
     quill::Logger* logger;

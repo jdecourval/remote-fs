@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "remotefs/tools/FuseOp.h"
+#include "remotefs/tools/GetAddrInfoErrorCategory.h"
 
 namespace remotefs {
 
@@ -103,8 +104,15 @@ void Server::read_callback(int syscall_ret, int client_socket,
         case 6:
             syscalls.release(*reinterpret_cast<messages::requests::Release*>(buffer->data()));
             break;
+        case 7:
+            syscalls.ping(std::move(buffer), client_socket);
+            break;
         default:
             assert(false);
+    }
+    if (!buffer) {
+        buffer.reset(new std::array<char, settings::MAX_MESSAGE_SIZE>());
+        buffer_view = std::span{buffer->data(), buffer->size()};
     }
     io_uring.read(client_socket, buffer_view, 0,
                   [this, client_socket, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
@@ -113,19 +121,9 @@ void Server::read_callback(int syscall_ret, int client_socket,
 }
 
 void Server::start(const std::string& address) {
-    class GetAddrInfoErrorCategory : public std::error_category {
-        const char* name() const noexcept override {
-            return "getaddrinfo";
-        }
-        std::string message(int i) const override {
-            return gai_strerror(i);
-        }
-    };
-
     LOG_INFO(logger, "Binding to {}", address);
-    struct addrinfo hosthints {
-        .ai_flags = AI_PASSIVE, .ai_family = AF_INET, .ai_socktype = SOCK_STREAM, .ai_protocol = IPPROTO_SCTP
-    };
+    struct addrinfo const hosthints{
+        .ai_flags = AI_PASSIVE, .ai_family = AF_INET, .ai_socktype = SOCK_STREAM, .ai_protocol = IPPROTO_SCTP};
     struct addrinfo* hostinfo;  // TODO: unique_ptr with freeaddrinfo
     if (auto ret = getaddrinfo(address.c_str(), "5001", &hosthints, &hostinfo); ret < 0) {
         throw std::system_error(ret, GetAddrInfoErrorCategory(), "Failed to resolve address");
@@ -159,11 +157,23 @@ void Server::start(const std::string& address) {
     }
 
     int disable = 1;
-    if (setsockopt(socket, IPPROTO_SCTP, SCTP_DISABLE_FRAGMENTS, &disable, (socklen_t)sizeof(disable)) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to disable SCTP fragments");
-    }
+    //    if (setsockopt(socket, IPPROTO_SCTP, SCTP_DISABLE_FRAGMENTS, &disable, (socklen_t)sizeof(disable)) != 0) {
+    //        throw std::system_error(errno, std::system_category(), "Failed to disable SCTP fragments");
+    //    }
     if (setsockopt(socket, IPPROTO_SCTP, SCTP_NODELAY, &disable, (socklen_t)sizeof(disable)) != 0) {
         throw std::system_error(errno, std::system_category(), "Failed to disable nagle's algorithm");
+    }
+    int socket_bufsize = 18203278;
+    // TODO: SOL_SOCKET or IPPROTO_SCTP?
+    if (setsockopt(socket, SOL_SOCKET, SO_SNDBUF, &socket_bufsize, (socklen_t)sizeof(socket_bufsize)) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to set socket transmit buffer size");
+    }
+    if (setsockopt(socket, SOL_SOCKET, SO_RCVBUF, &socket_bufsize, (socklen_t)sizeof(socket_bufsize)) != 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to set socket receive buffer size");
+    }
+    auto delivery_point = 785792;
+    if (setsockopt(socket, IPPROTO_SCTP, SCTP_PARTIAL_DELIVERY_POINT, &delivery_point, sizeof(delivery_point))) {
+        throw std::system_error(errno, std::system_category(), "Failed to set delivery point");
     }
 
     if (::bind(socket, hostinfo->ai_addr, hostinfo->ai_addrlen) < 0) {
@@ -175,7 +185,7 @@ void Server::start(const std::string& address) {
     }
 
     auto& loop_breaked = metric_registry.create_counter("loop-break");
-    auto& wait_time = metric_registry.create_histogram("message-received");
+    auto& wait_time = metric_registry.create_timer("message-received");
     auto& getattr_timing = metric_registry.create_histogram("message-received-getattr");
     auto& readdir_timing = metric_registry.create_histogram("message-received-readdir");
     auto& open_timing = metric_registry.create_histogram("message-received-open");

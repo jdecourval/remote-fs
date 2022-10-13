@@ -3,14 +3,42 @@
 
 #include <fuse_lowlevel.h>
 
+#include <algorithm>
 #include <array>
-#include <chrono>
+#include <cassert>
+#include <span>
 
 namespace remotefs::messages {
 namespace both {
-struct Ping {
-    std::chrono::high_resolution_clock::time_point first;
-    std::chrono::high_resolution_clock::time_point middle;
+class Ping {
+    [[maybe_unused]] const uint8_t tag = 7;  // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
+    int buffer_size;
+    [[maybe_unused]] char buffer[];  // NOLINT(cppcoreguidelines-avoid-c-arrays)
+
+   public:
+    static void* operator new(std::size_t, std::size_t total_size) {
+        assert(total_size >= sizeof(Ping));
+        return ::operator new (total_size, std::align_val_t{alignof(Ping)});
+    }
+
+    static void operator delete(void* ping) {
+        ::operator delete (ping, std::align_val_t{alignof(Ping)});
+    }
+
+    [[nodiscard]] size_t size() const {
+        return sizeof(*this) + buffer_size;
+    }
+
+    [[nodiscard]] std::span<const char> view() const {
+        return {reinterpret_cast<const char*>(this), size()};
+    }
+
+    [[nodiscard]] std::span<char> view() {
+        return {reinterpret_cast<char*>(this), size()};
+    }
+
+    explicit Ping(std::size_t total_size)
+        : buffer_size{static_cast<int>(total_size - sizeof(Ping))} {};
 };
 }  // namespace both
 namespace requests {

@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
     logger->init_backtrace(2, quill::LogLevel::Critical);
 
     auto server = remotefs::Server(program.get<bool>("--metrics"));
-    LOG_DEBUG(logger, "Ready do start");
+    LOG_DEBUG(logger, "Ready to start");
     server.start(program.get("address"));
 
     LOG_DEBUG(logger, "Cleanly exited");
