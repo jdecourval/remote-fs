@@ -11,7 +11,7 @@ add_library(remotefs
     remotefs/uring/IoUring.h
     remotefs/messages/Messages.h
     remotefs/uring/IoUring.cpp
-    )
+    remotefs/tools/GetAddrInfoErrorCategory.h)
 
 set_target_properties(remotefs PROPERTIES LINKER_LANGUAGE CXX)
 
