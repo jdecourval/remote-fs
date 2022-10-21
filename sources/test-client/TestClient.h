@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "remotefs/metrics/Metrics.h"
+#include "remotefs/sockets/Socket.h"
 #include "remotefs/uring/IoUring.h"
 
 namespace quill {
@@ -22,7 +23,7 @@ class TestClient {
         struct PipelineStage {
             void read_write() const;
 
-            int socket;  // Not owner
+            remotefs::Socket& socket;
             remotefs::IoUring& uring;
             std::pair<std::unique_ptr<remotefs::messages::both::Ping>, std::unique_ptr<remotefs::messages::both::Ping>>
                 buffers;
@@ -43,7 +44,7 @@ class TestClient {
     };
 
    public:
-    TestClient(int (*socket_constructor)(), int threads_n, int sockets_n, int pipeline, int chunk_size,
+    TestClient(remotefs::Socket (*socket_constructor)(), int threads_n, int sockets_n, int pipeline, int chunk_size,
                bool share_ring);
     ~TestClient();
     void start();
@@ -51,7 +52,7 @@ class TestClient {
     void register_sockets();
 
    private:
-    std::vector<int> sockets;  // Owner
+    std::vector<remotefs::Socket> sockets;
     std::vector<remotefs::IoUring> urings;
     std::vector<ClientThread> threads;
 };

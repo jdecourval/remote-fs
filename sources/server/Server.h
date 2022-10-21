@@ -6,6 +6,7 @@
 #include "Config.h"
 #include "Syscalls.h"
 #include "remotefs/metrics/Metrics.h"
+#include "remotefs/sockets/Socket.h"
 #include "remotefs/uring/IoUring.h"
 
 namespace quill {
@@ -17,13 +18,15 @@ namespace remotefs {
 class Server {
    public:
     explicit Server(bool metrics_on_stop = false);
+    Server(const Server&) = delete;
+    Server& operator=(const Server&) = delete;
     void start(const std::string& address);
-    void read_callback(int syscall_ret, int client_socket,
+    void read_callback(int syscall_ret, Socket&& client_socket,
                        std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer);
     void accept_callback(int syscall_ret);
 
    private:
-    int socket = 0;
+    remotefs::Socket socket;
     quill::Logger* logger;
     MetricRegistry<settings::DISABLE_METRICS> metric_registry;
     Syscalls syscalls;

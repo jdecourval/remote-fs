@@ -60,5 +60,17 @@ fetchcontent_declare(
 fetchcontent_makeavailable(EngFormat-Cpp)
 ignorewarnings(EngFormat-Cpp)
 
+#------------------------------------------------------------------------------
+#  out_ptr - C++11 implementation of std::out_ptr (p1132)
+fetchcontent_declare(
+    ztd_out_ptr
+    GIT_REPOSITORY https://github.com/soasis/out_ptr.git
+    GIT_TAG c9190f7febbcfcb183e34fe8449bcea80efb28d2
+    UPDATE_DISCONNECTED TRUE
+    GIT_SHALLOW TRUE
+)
+
+fetchcontent_makeavailable(ztd_out_ptr)
+ignorewarnings(ztd_out_ptr)
 
 add_subdirectory(fuse3)

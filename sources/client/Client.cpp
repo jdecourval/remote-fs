@@ -10,6 +10,7 @@
 
 #include "Config.h"
 #include "FuseCmdlineOptsWrapper.h"
+#include "remotefs/sockets/Socket.h"
 namespace remotefs {
 thread_local Client *Client::self;
 std::atomic_flag Client::common_init_done;
@@ -47,7 +48,7 @@ void Client::fuse_reply_data(std::unique_ptr<std::array<char, settings::MAX_MESS
     auto &msg = *reinterpret_cast<msg_t *>(buffer->data());
     auto req = msg.req;
     // TODO:size Cleanup this hack, it is still a strict aliasing violation.
-    static_assert(sizeof(fuse_out_header) + msg_t::MAX_PAYLOAD_SIZE < sizeof(msg_t));
+    static_assert(sizeof(fuse_out_header) + msg_t::MAX_PAYLOAD_SIZE <= sizeof(msg_t));
     auto *headers = reinterpret_cast<fuse_out_header *>(msg.data.data() - sizeof(fuse_out_header));
     assert(static_cast<void *>(headers) >= buffer.get());
     auto size = static_cast<uint32_t>(sizeof(*headers) + msg.data_size);
@@ -159,58 +160,7 @@ void Client::fuse_callback(int syscall_ret, std::unique_ptr<char[]> &&buffer, si
 }
 
 void Client::start(const std::string &address) {
-    class GetAddrInfoErrorCategory : public std::error_category {
-        [[nodiscard]] const char *name() const noexcept override {
-            return "getaddrinfo";
-        }
-        [[nodiscard]] std::string message(int i) const override {
-            return gai_strerror(i);
-        }
-    };
-
-    LOG_INFO(logger, "Opening connection to {}", address);
-    struct addrinfo hosthints {
-        .ai_family = AF_INET, .ai_socktype = SOCK_STREAM, .ai_protocol = IPPROTO_SCTP
-    };
-    struct addrinfo *hostinfo;  // TODO: unique_ptr with freeaddrinfo
-    if (auto ret = getaddrinfo(address.c_str(), "5001", &hosthints, &hostinfo); ret < 0) {
-        throw std::system_error(ret, GetAddrInfoErrorCategory(), "Failed to resolve address");
-    }
-
-    socket = ::socket(hostinfo->ai_family, hostinfo->ai_socktype, hostinfo->ai_protocol);
-    if (socket < 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to configure socket");
-    }
-
-    const auto MAX_STREAM = 64;
-    struct sctp_initmsg initmsg {
-        .sinit_num_ostreams = MAX_STREAM, .sinit_max_instreams = MAX_STREAM,
-    };
-    if (setsockopt(socket, IPPROTO_SCTP, SCTP_INITMSG, &initmsg, sizeof(struct sctp_initmsg)) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to configure sctp init message");
-    }
-
-    auto sctp_flags = sctp_sndrcvinfo{};
-    socklen_t sctp_flags_size = sizeof(sctp_flags);
-    if (getsockopt(socket, IPPROTO_SCTP, SCTP_DEFAULT_SEND_PARAM, &sctp_flags, &sctp_flags_size) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to get default SCTP options");
-    }
-    sctp_flags.sinfo_flags |= SCTP_UNORDERED;
-    if (setsockopt(socket, IPPROTO_SCTP, SCTP_DEFAULT_SEND_PARAM, &sctp_flags, (socklen_t)sizeof(sctp_flags)) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to configure SCTP default send options");
-    }
-
-    int disable = 1;
-    if (setsockopt(socket, IPPROTO_SCTP, SCTP_DISABLE_FRAGMENTS, &disable, (socklen_t)sizeof(disable)) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to disable SCTP fragments");
-    }
-    if (setsockopt(socket, IPPROTO_SCTP, SCTP_NODELAY, &disable, (socklen_t)sizeof(disable)) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to disable nagle's algorithm");
-    }
-
-    if (connect(socket, hostinfo->ai_addr, hostinfo->ai_addrlen) < 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to connect socket");
-    }
+    remotefs::Socket::connect(address, 6512);
 
     for (auto i = 0; i < 2; i++) {
         auto page_size = sysconf(_SC_PAGESIZE);

@@ -7,8 +7,8 @@
 
 using remotefs::messages::both::Ping;
 
-TestClient::TestClient(int (*socket_constructor)(), int threads_n, int sockets_n, int pipeline, int chunk_size,
-                       bool share_ring) {
+TestClient::TestClient(remotefs::Socket (*socket_constructor)(), int threads_n, int sockets_n, int pipeline,
+                       int chunk_size, bool share_ring) {
     assert(sockets_n >= 0);
     assert(threads_n > 0);
 
@@ -27,7 +27,7 @@ TestClient::TestClient(int (*socket_constructor)(), int threads_n, int sockets_n
         auto& latency_metric = thread.metrics.create_timer("latency");
 
         for (auto j = 0; j < std::max(1, sockets_n) * pipeline; j++) {
-            auto socket = sockets.at((j * (std::max(1, sockets_n) * pipeline) + i) % sockets.size());
+            auto& socket = sockets.at((j * (std::max(1, sockets_n) * pipeline) + i) % sockets.size());
             thread.stages.push_back({socket, ring,
                                      std::pair{std::unique_ptr<Ping>{new (chunk_size) Ping(chunk_size)},
                                                std::unique_ptr<Ping>{new (chunk_size) Ping(chunk_size)}},
@@ -87,9 +87,6 @@ TestClient::~TestClient() {
     }
     for (auto& thread : threads) {
         thread.thread.join();
-    }
-    for (auto socket : sockets) {
-        ::close(socket);
     }
 }
 TestClient::ClientThread::ClientThread(remotefs::IoUring& ring)

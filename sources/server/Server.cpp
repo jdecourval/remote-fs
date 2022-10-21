@@ -1,14 +1,11 @@
 #include "Server.h"
 
-#include <netdb.h>
-#include <netinet/sctp.h>
 #include <quill/Quill.h>
 
 #include <memory>
 #include <optional>
 
 #include "remotefs/tools/FuseOp.h"
-#include "remotefs/tools/GetAddrInfoErrorCategory.h"
 
 namespace remotefs {
 
@@ -30,7 +27,8 @@ void signal_term_handler(int signal) {
 }
 
 Server::Server(bool metrics_on_stop)
-    : logger{quill::get_logger()},
+    : socket{},
+      logger{quill::get_logger()},
       metric_registry{},
       syscalls{io_uring},
       _metrics_on_stop{metrics_on_stop} {
@@ -40,43 +38,44 @@ Server::Server(bool metrics_on_stop)
 }
 
 void Server::accept_callback(int syscall_ret) {
-    if (auto client_socket = syscall_ret; client_socket >= 0) {
+    if (syscall_ret >= 0) {
         LOG_INFO(logger, "Accepted a connection");
         for (auto i = 0; i < 1; i++) {
             auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>();
             auto buffer_view = std::span{buffer->data(), buffer->size()};
-            io_uring.read(client_socket, buffer_view, 0,
-                          [this, client_socket, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-                              read_callback(syscall_ret, client_socket, std::move(buffer));
-                          });
+            io_uring.read(
+                syscall_ret, buffer_view, 0,
+                [this, client_socket = Socket{syscall_ret}, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+                    read_callback(syscall_ret, std::move(client_socket), std::move(buffer));
+                });
         }
     } else {
         LOG_ERROR(logger, "Error accepting a connection {}", std::strerror(-syscall_ret));
     }
 }
 
-void Server::read_callback(int syscall_ret, int client_socket,
+void Server::read_callback(int syscall_ret, Socket&& client_socket,
                            std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer) {
     auto buffer_view = std::span{buffer->data(), buffer->size()};
 
     if (syscall_ret < 0) {
         if (syscall_ret == -ECONNRESET) {
             LOG_INFO(logger, "Connection reset by peer. Closing socket.");
-            close(client_socket);
             return;
         }
 
         LOG_ERROR(logger, "Read failed, retrying: {}", std::strerror(-syscall_ret));
-        io_uring.read(client_socket, buffer_view, 0,
-                      [this, client_socket, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-                          read_callback(syscall_ret, client_socket, std::move(buffer));
-                      });
+        auto client_socket_int = static_cast<int>(client_socket);
+        io_uring.read(
+            client_socket_int, buffer_view, 0,
+            [this, client_socket = std::move(client_socket), buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+                read_callback(syscall_ret, std::move(client_socket), std::move(buffer));
+            });
         return;
     }
 
     if (syscall_ret == 0) {
         LOG_INFO(logger, "End of file detected. Closing socket.");
-        close(client_socket);
         return;
     }
 
@@ -114,75 +113,17 @@ void Server::read_callback(int syscall_ret, int client_socket,
         buffer.reset(new std::array<char, settings::MAX_MESSAGE_SIZE>());
         buffer_view = std::span{buffer->data(), buffer->size()};
     }
-    io_uring.read(client_socket, buffer_view, 0,
-                  [this, client_socket, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-                      read_callback(syscall_ret, client_socket, std::move(buffer));
-                  });
+    auto client_socket_int = static_cast<int>(client_socket);
+    io_uring.read(
+        client_socket_int, buffer_view, 0,
+        [this, client_socket = std::move(client_socket), buffer = std::move(buffer)](int32_t syscall_ret) mutable {
+            read_callback(syscall_ret, std::move(client_socket), std::move(buffer));
+        });
 }
 
 void Server::start(const std::string& address) {
     LOG_INFO(logger, "Binding to {}", address);
-    struct addrinfo const hosthints{
-        .ai_flags = AI_PASSIVE, .ai_family = AF_INET, .ai_socktype = SOCK_STREAM, .ai_protocol = IPPROTO_SCTP};
-    struct addrinfo* hostinfo;  // TODO: unique_ptr with freeaddrinfo
-    if (auto ret = getaddrinfo(address.c_str(), "5001", &hosthints, &hostinfo); ret < 0) {
-        throw std::system_error(ret, GetAddrInfoErrorCategory(), "Failed to resolve address");
-    }
-
-    socket = ::socket(hostinfo->ai_family, hostinfo->ai_socktype, hostinfo->ai_protocol);
-    if (socket < 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to configure socket");
-    }
-
-    const auto enable = 1;
-    if (setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
-        throw std::system_error(errno, std::system_category(), "Failed to set REUSEADDR");
-
-    const auto MAX_STREAM = 64;
-    struct sctp_initmsg initmsg {};
-    initmsg.sinit_num_ostreams = MAX_STREAM;
-    initmsg.sinit_max_instreams = MAX_STREAM;
-    if (setsockopt(socket, IPPROTO_SCTP, SCTP_INITMSG, &initmsg, sizeof(struct sctp_initmsg)) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to configure sctp init message");
-    }
-
-    auto sctp_flags = sctp_sndrcvinfo{};
-    socklen_t sctp_flags_size = sizeof(sctp_flags);
-    if (getsockopt(socket, IPPROTO_SCTP, SCTP_DEFAULT_SEND_PARAM, &sctp_flags, &sctp_flags_size) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to get default SCTP options");
-    }
-    sctp_flags.sinfo_flags |= SCTP_UNORDERED;
-    if (setsockopt(socket, IPPROTO_SCTP, SCTP_DEFAULT_SEND_PARAM, &sctp_flags, (socklen_t)sizeof(sctp_flags)) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to configure SCTP default send options");
-    }
-
-    int disable = 1;
-    //    if (setsockopt(socket, IPPROTO_SCTP, SCTP_DISABLE_FRAGMENTS, &disable, (socklen_t)sizeof(disable)) != 0) {
-    //        throw std::system_error(errno, std::system_category(), "Failed to disable SCTP fragments");
-    //    }
-    if (setsockopt(socket, IPPROTO_SCTP, SCTP_NODELAY, &disable, (socklen_t)sizeof(disable)) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to disable nagle's algorithm");
-    }
-    int socket_bufsize = 18203278;
-    // TODO: SOL_SOCKET or IPPROTO_SCTP?
-    if (setsockopt(socket, SOL_SOCKET, SO_SNDBUF, &socket_bufsize, (socklen_t)sizeof(socket_bufsize)) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to set socket transmit buffer size");
-    }
-    if (setsockopt(socket, SOL_SOCKET, SO_RCVBUF, &socket_bufsize, (socklen_t)sizeof(socket_bufsize)) != 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to set socket receive buffer size");
-    }
-    auto delivery_point = 785792;
-    if (setsockopt(socket, IPPROTO_SCTP, SCTP_PARTIAL_DELIVERY_POINT, &delivery_point, sizeof(delivery_point))) {
-        throw std::system_error(errno, std::system_category(), "Failed to set delivery point");
-    }
-
-    if (::bind(socket, hostinfo->ai_addr, hostinfo->ai_addrlen) < 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to bind socket");
-    }
-
-    if (::listen(socket, 10) < 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to listen to socket");
-    }
+    socket = remotefs::Socket::listen(address, 6512);
 
     auto& loop_breaked = metric_registry.create_counter("loop-break");
     auto& wait_time = metric_registry.create_timer("message-received");
