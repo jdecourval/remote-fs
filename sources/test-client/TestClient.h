@@ -21,14 +21,17 @@ class TestClient {
     struct ClientThread {
        public:
         struct PipelineStage {
-            void read_write() const;
+            void read_write(long max_size_thread) const;
 
             remotefs::Socket& socket;
             remotefs::IoUring& uring;
             std::pair<std::unique_ptr<remotefs::messages::both::Ping>, std::unique_ptr<remotefs::messages::both::Ping>>
                 buffers;
+            std::atomic<int>& stages_running;
             remotefs::MetricRegistry<>::Counter& bandwidth;
             remotefs::MetricRegistry<>::Timer& latency;
+            std::chrono::high_resolution_clock::time_point start_time = std::chrono::high_resolution_clock::now();
+            bool measure_latency = false;
         };
 
         explicit ClientThread(remotefs::IoUring& ring);
@@ -41,13 +44,15 @@ class TestClient {
         quill::Logger* logger = nullptr;
         remotefs::MetricRegistry<> metrics;
         std::chrono::high_resolution_clock::time_point start;
+        std::unique_ptr<std::atomic<int>> stages_running = std::make_unique<std::atomic<int>>();
     };
 
    public:
-    TestClient(remotefs::Socket (*socket_constructor)(), int threads_n, int sockets_n, int pipeline, int chunk_size,
-               bool share_ring);
+    TestClient(const std::string& address, int port, remotefs::Socket::Options socket_options, int threads_n,
+               int sockets_n, int pipeline, int chunk_size, bool share_ring, int ring_depth);
     ~TestClient();
-    void start();
+    [[nodiscard]] bool done() const;
+    void start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring);
     void register_buffers();
     void register_sockets();
 

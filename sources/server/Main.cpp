@@ -4,11 +4,15 @@
 
 #include "Server.h"
 
-
 int main(int argc, char* argv[]) {
     argparse::ArgumentParser program("remotefs server");
     int verbosity = 0;
 
+    // Positional arguments
+    program.add_argument("address").help("address to bind to");
+    program.add_argument("port").help("port to bind to").scan<'d', int>().default_value(6512);
+
+    // Basic options
     program.add_argument("-v", "--verbose")
         .help("increase output verbosity, up to four times")
         .action([&](const auto&) { ++verbosity; })
@@ -27,8 +31,71 @@ int main(int argc, char* argv[]) {
         .default_value(1)
         //        .implicit_value(nproc)
         .scan<'d', int>();
+    program.add_argument("-p", "--pipeline")
+        .help("How many operations per thread, socket and stream to schedule at a time.")
+        .default_value(1)
+        .scan<'d', int>();
 
-    program.add_argument("address").help("address to bind to");
+    // Socket options
+    program.add_argument("-r", "--rx-buffer-size")
+        .help("How big the socket's RX buffer is.")
+        .default_value(1024 * 1024l)
+        .scan<'d', long>();
+    program.add_argument("-s", "--tx-buffer-size")
+        .help("How big the socket's TX buffer is.")
+        .default_value(1024 * 1024l)
+        .scan<'d', long>();
+    program.add_argument("-c", "--chunk-size")
+        .help("Deliver data to the application in chunk this big.")
+        .default_value(65475 - 20)
+        .scan<'d', int>();
+    program.add_argument("--fragment-size")
+        .help("Fragment chunks on the network to at most this big (bytes). Default to the PMTU.")
+        .default_value(0);
+    program.add_argument("-O", "--ordered-delivery")
+        .help("Enable SCTP ordered delivery.")
+        .default_value(false)
+        .implicit_value(true);
+    program.add_argument("-n", "--nagle").help("Enable the nagle's algorithm.").default_value(false);
+    program.add_argument("-R", "--disable-fragment")
+        .help(
+            "Enforce that no SCTP fragmentation occurs. "
+            "Have no effect if --chunk-size is smaller than --fragment-size.")
+        .default_value(false)
+        .implicit_value(true);
+
+    // Advanced options
+    program.add_argument("-R", "--share-ring")
+        .help("Share io uring between all threads.")
+        .default_value(false)
+        .implicit_value(true);
+    program.add_argument("--register-ring")
+        .help("Register io uring ring's fd .")
+        .implicit_value(true)
+        .default_value(false);
+    program.add_argument("-D", "--ring-depth")
+        .help("io uring queue depth.")
+        .scan<'d', int>()
+        .default_value(remotefs::IoUring::queue_depth_default);
+    program.add_argument("-B", "--register-buffers")
+        .help("Register buffers in io uring.")
+        .default_value(false)
+        .implicit_value(true);
+    program.add_argument("-V", "--register-sockets")
+        .help("Register sockets in io uring.")
+        .default_value(false)
+        .implicit_value(true);
+    program.add_argument("--min-batch")
+        .help("Process at least this many messages in an iteration of the event loop.")
+        .scan<'d', int>()
+        .default_value(remotefs::IoUring::wait_min_batch_size_default);
+    program.add_argument("--batch-wait-timeout")
+        .help("How long to maximally wait for --min-batch.")
+        .default_value(duration_cast<std::chrono::nanoseconds>(remotefs::IoUring::wait_timeout_default).count());
+    program.add_argument("--buffers-alignment")
+        .help("Override default buffers alignment")
+        .scan<'d', std::size_t>()
+        .default_value(alignof(remotefs::messages::both::Ping));
 
     try {
         program.parse_args(argc, argv);
@@ -64,9 +131,21 @@ int main(int argc, char* argv[]) {
     // enable a backtrace that will get flushed when we log CRITICAL
     logger->init_backtrace(2, quill::LogLevel::Critical);
 
-    auto server = remotefs::Server(program.get<bool>("--metrics"));
+    auto server = remotefs::Server(program.get<bool>("--metrics"), program.get<bool>("--register-ring"),
+                                   program.get<int>("--ring-depth"));
+    auto socket_options = remotefs::Socket::Options{program.get<long>("--rx-buffer-size"),
+                                                    program.get<long>("--tx-buffer-size"),
+                                                    program.get<int>("--chunk-size"),
+                                                    program.get<int>("--fragment-size"),
+                                                    64,
+                                                    program.get<bool>("--ordered-delivery"),
+                                                    !program.get<bool>("--nagle"),
+                                                    program.get<bool>("--disable-fragment")};
+
     LOG_DEBUG(logger, "Ready to start");
-    server.start(program.get("address"));
+    server.start(program.get("address"), program.get<int>("port"), program.get<int>("--pipeline"),
+                 program.get<int>("--min-batch"), std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
+                 socket_options);
 
     LOG_DEBUG(logger, "Cleanly exited");
     return 0;

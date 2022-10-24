@@ -26,21 +26,26 @@ void signal_term_handler(int signal) {
 }
 }
 
-Server::Server(bool metrics_on_stop)
+Server::Server(bool metrics_on_stop, bool register_ring, int ring_depth)
     : socket{},
       logger{quill::get_logger()},
       metric_registry{},
+      io_uring{ring_depth},
       syscalls{io_uring},
       _metrics_on_stop{metrics_on_stop} {
     std::signal(SIGUSR1, signal_usr1_handler);
     std::signal(SIGTERM, signal_term_handler);
     std::signal(SIGPIPE, SIG_IGN);
+
+    if (register_ring) {
+        io_uring.register_ring();
+    }
 }
 
-void Server::accept_callback(int syscall_ret) {
+void Server::accept_callback(int syscall_ret, int pipeline) {
     if (syscall_ret >= 0) {
         LOG_INFO(logger, "Accepted a connection");
-        for (auto i = 0; i < 1; i++) {
+        for (auto i = 0; i < pipeline; i++) {
             auto buffer = std::make_unique<std::array<char, settings::MAX_MESSAGE_SIZE>>();
             auto buffer_view = std::span{buffer->data(), buffer->size()};
             io_uring.read(
@@ -121,9 +126,10 @@ void Server::read_callback(int syscall_ret, Socket&& client_socket,
         });
 }
 
-void Server::start(const std::string& address) {
+void Server::start(const std::string& address, int port, int pipeline, int min_batch_size,
+                   std::chrono::nanoseconds wait_timeout, const Socket::Options& socket_options) {
     LOG_INFO(logger, "Binding to {}", address);
-    socket = remotefs::Socket::listen(address, 6512);
+    socket = remotefs::Socket::listen(address, port, socket_options);
 
     auto& loop_breaked = metric_registry.create_counter("loop-break");
     auto& wait_time = metric_registry.create_timer("message-received");
@@ -135,12 +141,12 @@ void Server::start(const std::string& address) {
     auto& release_timing = metric_registry.create_histogram("message-received-release");
     auto& send_timing = metric_registry.create_histogram("message-sent");
 
-    io_uring.accept(socket, [this](int32_t syscall_ret) { accept_callback(syscall_ret); });
+    io_uring.accept(socket, [this, pipeline](int32_t syscall_ret) { accept_callback(syscall_ret, pipeline); });
 
     while (true) {
         {
             auto tracker = wait_time.track_scope();
-            io_uring.queue_wait();
+            io_uring.queue_wait(min_batch_size, wait_timeout);
         }
 
         if (log_requested) {
@@ -148,7 +154,7 @@ void Server::start(const std::string& address) {
             std::cerr << metric_registry << std::flush;
         }
 
-        if (stop_requested) {
+        if (stop_requested) [[unlikely]] {
             stop_requested = false;
             LOG_INFO(logger, "Received SIGTERM");
             break;

@@ -41,6 +41,8 @@ Client::Client(int argc, char *argv[])
         .fd = fuse_fd,
     };
     pthread_mutex_init(&fuse_channel.lock, nullptr);
+
+    io_uring.register_ring();
 }
 
 void Client::fuse_reply_data(std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>> &&buffer) {

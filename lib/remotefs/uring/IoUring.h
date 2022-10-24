@@ -16,12 +16,12 @@
 namespace remotefs {
 
 class IoUring {
-    static const auto queue_depth = 256;
-    static const auto wait_min_batch_size = 1;
-    static const auto wait_timeout_s = 1;
-    static const auto wait_timeout_ns = 0;
-
    public:
+    static constexpr auto queue_depth_default = 64;
+    static constexpr auto wait_min_batch_size_default = 1;
+    static constexpr auto wait_timeout_default = std::chrono::seconds{1};
+    static constexpr auto max_wait_min_batch_size = 16;  // Compile time limit
+
     struct CallbackErased {
         virtual void operator()(int res) = 0;
         virtual ~CallbackErased() = default;
@@ -39,9 +39,9 @@ class IoUring {
         Callable callable;
     };
 
-    explicit IoUring(bool register_ring_fd = true);
+    explicit IoUring(int queue_depth = queue_depth_default);
     IoUring(IoUring&& source) noexcept;
-    IoUring& operator=(IoUring&& source) noexcept;
+    IoUring& operator=(IoUring source) noexcept;
     IoUring(const IoUring& source) = delete;
     IoUring& operator=(const IoUring& source) = delete;
     ~IoUring();
@@ -67,8 +67,10 @@ class IoUring {
     template <typename Callable, size_t size>
     void write_vector(int fd, std::span<const iovec, size> sources, Callable&& callable);
 
-    void queue_wait();
+    void queue_wait(int min_batch_size = wait_min_batch_size_default,
+                    std::chrono::nanoseconds wait_timeout = wait_timeout_default);
 
+    void register_ring();
     void register_buffer(std::span<char> buffer);
 
    private:

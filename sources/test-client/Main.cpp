@@ -44,7 +44,8 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
 
     parser.add_argument("-s", "--max-size")
         .help("Stop after transferring this much data.")
-        .default_value(std::numeric_limits<size_t>::max());
+        .scan<'d', long>()
+        .default_value(std::numeric_limits<long>::max());
 
     parser.add_argument("-c", "--chunk-size")
         .help("Deliver data to the application in chunk this big.")
@@ -57,7 +58,10 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
         .help("How many operations per thread, socket and stream to schedule at a time.")
         .default_value(1)
         .scan<'d', int>();
-    parser.add_argument("-n", "--nagle").help("Enable the nagle's algorithm.").default_value(false);
+    parser.add_argument("-n", "--nagle")
+        .help("Enable the nagle's algorithm.")
+        .implicit_value(true)
+        .default_value(false);
     parser.add_argument("-r", "--rx-buffer-size")
         .help("How big the socket's RX buffer is.")
         .default_value(1024 * 1024l)
@@ -70,7 +74,14 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
         .help("Share io uring between all threads.")
         .default_value(false)
         .implicit_value(true);
-    parser.add_argument("-D", "--ring-depth").help("io uring queue depth.").default_value(64);
+    parser.add_argument("--register-ring")
+        .help("Register io uring ring's fd .")
+        .implicit_value(true)
+        .default_value(false);
+    parser.add_argument("-D", "--ring-depth")
+        .help("io uring queue depth.")
+        .scan<'d', int>()
+        .default_value(remotefs::IoUring::queue_depth_default);
     parser.add_argument("-B", "--register-buffers")
         .help("Register buffers in io uring.")
         .default_value(false)
@@ -99,16 +110,16 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
         .scan<'d', int>();
     parser.add_argument("--min-batch")
         .help("Process at least this many messages in an iteration of the event loop.")
-        .default_value(1);
+        .scan<'d', int>()
+        .default_value(remotefs::IoUring::wait_min_batch_size_default);
+    parser.add_argument("--batch-wait-timeout")
+        .help("How long to maximally wait for --min-batch.")
+        .scan<'d', long>()
+        .default_value(duration_cast<std::chrono::nanoseconds>(remotefs::IoUring::wait_timeout_default).count());
     parser.add_argument("--buffers-alignment")
         .help("Override default buffers alignment")
         .scan<'d', std::size_t>()
         .default_value(alignof(remotefs::messages::both::Ping));
-
-    parser.add_argument("-L", "--latency")
-        .help("Measure the round trip latency.")
-        .default_value(false)
-        .implicit_value(true);
 
     parser.add_argument("address").help("Address to connect to.");
     parser.add_argument("port").help("Port to connect to.").scan<'d', int>().default_value(6512);
@@ -152,37 +163,41 @@ int main(int argc, char* argv[]) {
         throw std::logic_error("--streams is unimplemented.");
     }
 
-    auto threads = program.get<int>("--threads");
-    auto sockets = program.get<int>("--sockets");
-    auto pipeline = program.get<int>("--pipeline");
-    auto socket_constructor = [] {
-        return remotefs::Socket::connect(
-            program.get("address"), program.get<int>("port"),
-            {program.get<long>("--rx-buffer-size"), program.get<long>("--tx-buffer-size"),
-             program.get<int>("--chunk-size"), program.get<int>("--fragment-size"),
-             program.get<std::uint16_t>("--streams"), program.get<bool>("--ordered-delivery"),
-             !program.get<bool>("--nagle"), program.get<bool>("--disable-fragment")});
-    };
-    auto client = TestClient{socket_constructor,
-                             threads,
-                             sockets,
-                             pipeline,
-                             program.get<int>("--chunk-size"),
-                             program.get<bool>("--share-ring")};
+    if (program.is_used("--buffers-alignment")) {
+        throw std::logic_error("--buffers-alignment is unimplemented.");
+    }
+
+    auto socket_options =
+        remotefs::Socket::Options{program.get<long>("--rx-buffer-size"),   program.get<long>("--tx-buffer-size"),
+                                  program.get<int>("--chunk-size"),        program.get<int>("--fragment-size"),
+                                  program.get<std::uint16_t>("--streams"), program.get<bool>("--ordered-delivery"),
+                                  !program.get<bool>("--nagle"),           program.get<bool>("--disable-fragment")};
+    auto client = TestClient{
+        program.get("address"),           program.get<int>("port"),          socket_options,
+        program.get<int>("--threads"),    program.get<int>("--sockets"),     program.get<int>("--pipeline"),
+        program.get<int>("--chunk-size"), program.get<bool>("--share-ring"), program.get<int>("--ring-depth")};
 
     if (program.get<bool>("--register-buffers")) {
         client.register_buffers();
+        throw std::logic_error("--register-buffers is unimplemented.");
     }
 
     if (program.get<bool>("--register-sockets")) {
-        client.register_buffers();
+        client.register_sockets();
+        throw std::logic_error("--register-sockets is unimplemented.");
     }
 
-    client.start();
+    client.start(program.get<int>("--min-batch"), std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
+                 program.get<long>("--max-size"), program.get<bool>("--register-ring"));
 
     std::signal(SIGTERM, signal_handler);
     std::signal(SIGINT, signal_handler);
+    std::signal(SIGPIPE, SIG_IGN);
+
     while (!stop_requested) {
+        if (client.done()) {
+            break;
+        }
         std::this_thread::sleep_for(1s);
     }
 
