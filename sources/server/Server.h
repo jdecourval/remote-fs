@@ -17,12 +17,12 @@ namespace remotefs {
 
 class Server {
    public:
-    explicit Server(bool metrics_on_stop = false, bool register_ring = true,
+    explicit Server(const std::string& address, int port, const Socket::Options& socket_options,
+                    bool metrics_on_stop = false, bool register_ring = true,
                     int ring_depth = remotefs::IoUring::queue_depth_default);
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;
-    void start(const std::string& address, int port, int pipeline, int min_batch_size,
-               std::chrono::nanoseconds wait_timeout, const Socket::Options& socket_options);
+    void start(int pipeline, int min_batch_size, std::chrono::nanoseconds wait_timeout, bool register_ring);
     void read_callback(int syscall_ret, Socket&& client_socket,
                        std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer);
     void accept_callback(int syscall_ret, int pipeline);

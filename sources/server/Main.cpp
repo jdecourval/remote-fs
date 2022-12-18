@@ -131,8 +131,6 @@ int main(int argc, char* argv[]) {
     // enable a backtrace that will get flushed when we log CRITICAL
     logger->init_backtrace(2, quill::LogLevel::Critical);
 
-    auto server = remotefs::Server(program.get<bool>("--metrics"), program.get<bool>("--register-ring"),
-                                   program.get<int>("--ring-depth"));
     auto socket_options = remotefs::Socket::Options{program.get<long>("--rx-buffer-size"),
                                                     program.get<long>("--tx-buffer-size"),
                                                     program.get<int>("--chunk-size"),
@@ -142,10 +140,23 @@ int main(int argc, char* argv[]) {
                                                     !program.get<bool>("--nagle"),
                                                     program.get<bool>("--disable-fragment")};
 
+    auto server = remotefs::Server(program.get("address"), program.get<int>("port"), socket_options,
+                                   program.get<bool>("--metrics"), program.get<int>("--ring-depth"));
+
     LOG_DEBUG(logger, "Ready to start");
-    server.start(program.get("address"), program.get<int>("port"), program.get<int>("--pipeline"),
-                 program.get<int>("--min-batch"), std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
-                 socket_options);
+    auto threads = std::vector<std::jthread>{};
+    for (auto i = 0; i < program.get<int>("--threads"); i++) {
+        threads.emplace_back([&] {
+            server.start(program.get<int>("--pipeline"), program.get<int>("--min-batch"),
+                         std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
+                         program.get<bool>("--register-ring"));
+        });
+    }
+
+    LOG_INFO(logger, "Waiting for workers");
+    for (auto& thread : threads) {
+        thread.join();
+    }
 
     LOG_DEBUG(logger, "Cleanly exited");
     return 0;

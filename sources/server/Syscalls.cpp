@@ -231,6 +231,7 @@ void Syscalls::open(messages::requests::Open& message, int socket) {
     auto ino = message.ino;
     auto file_info = message.file_info;
 
+    // TODO: Add FOPEN_PARALLEL_DIRECT_WRITES to flags. Probably better doing it client side.
     if (!(file_info.flags & (O_RDWR | O_WRONLY))) {
         // Only read-only for now
         auto& inode = inode_cache.inode_from_ino(ino);
@@ -258,8 +259,8 @@ void Syscalls::ping(std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>
     auto& message = *reinterpret_cast<messages::both::Ping*>(buffer->data());
     //    message.middle = std::chrono::high_resolution_clock::now();
     uring.write(socket, message.view(), [buffer = std::move(buffer)](int ret) {
-        if (ret == -EPIPE) {
-        } else if (ret < 0) {
+        if (ret == -EPIPE) [[unlikely]] {
+        } else if (ret < 0) [[unlikely]] {
             throw std::system_error(-ret, std::system_category(), "Failed to write to socket");
         }
     });

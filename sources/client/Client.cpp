@@ -2,7 +2,6 @@
 
 #include <fuse3/fuse_kernel.h>
 #include <netdb.h>
-#include <netinet/sctp.h>
 #include <quill/Quill.h>
 #include <sys/ioctl.h>
 

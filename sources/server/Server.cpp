@@ -26,7 +26,8 @@ void signal_term_handler(int signal) {
 }
 }
 
-Server::Server(bool metrics_on_stop, bool register_ring, int ring_depth)
+Server::Server(const std::string& address, int port, const Socket::Options& socket_options, bool metrics_on_stop,
+               bool register_ring, int ring_depth)
     : socket{},
       logger{quill::get_logger()},
       metric_registry{},
@@ -37,9 +38,8 @@ Server::Server(bool metrics_on_stop, bool register_ring, int ring_depth)
     std::signal(SIGTERM, signal_term_handler);
     std::signal(SIGPIPE, SIG_IGN);
 
-    if (register_ring) {
-        io_uring.register_ring();
-    }
+    LOG_INFO(logger, "Binding to {}", address);
+    socket = remotefs::Socket::listen(address, port, socket_options);
 }
 
 void Server::accept_callback(int syscall_ret, int pipeline) {
@@ -63,7 +63,7 @@ void Server::read_callback(int syscall_ret, Socket&& client_socket,
                            std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer) {
     auto buffer_view = std::span{buffer->data(), buffer->size()};
 
-    if (syscall_ret < 0) {
+    if (syscall_ret < 0) [[unlikely]] {
         if (syscall_ret == -ECONNRESET) {
             LOG_INFO(logger, "Connection reset by peer. Closing socket.");
             return;
@@ -79,7 +79,7 @@ void Server::read_callback(int syscall_ret, Socket&& client_socket,
         return;
     }
 
-    if (syscall_ret == 0) {
+    if (syscall_ret == 0) [[unlikely]] {
         LOG_INFO(logger, "End of file detected. Closing socket.");
         return;
     }
@@ -126,10 +126,10 @@ void Server::read_callback(int syscall_ret, Socket&& client_socket,
         });
 }
 
-void Server::start(const std::string& address, int port, int pipeline, int min_batch_size,
-                   std::chrono::nanoseconds wait_timeout, const Socket::Options& socket_options) {
-    LOG_INFO(logger, "Binding to {}", address);
-    socket = remotefs::Socket::listen(address, port, socket_options);
+void Server::start(int pipeline, int min_batch_size, std::chrono::nanoseconds wait_timeout, bool register_ring) {
+    if (register_ring) {
+        io_uring.register_ring();
+    }
 
     auto& loop_breaked = metric_registry.create_counter("loop-break");
     auto& wait_time = metric_registry.create_timer("message-received");
@@ -143,23 +143,17 @@ void Server::start(const std::string& address, int port, int pipeline, int min_b
 
     io_uring.accept(socket, [this, pipeline](int32_t syscall_ret) { accept_callback(syscall_ret, pipeline); });
 
-    while (true) {
-        {
-            auto tracker = wait_time.track_scope();
-            io_uring.queue_wait(min_batch_size, wait_timeout);
-        }
+    while (!stop_requested) [[likely]] {
+            {
+                auto tracker = wait_time.track_scope();
+                io_uring.queue_wait(min_batch_size, wait_timeout);
+            }
 
-        if (log_requested) {
-            log_requested = false;
-            std::cerr << metric_registry << std::flush;
+            if (log_requested) [[unlikely]] {
+                log_requested = false;
+                std::cerr << metric_registry << std::flush;
+            }
         }
-
-        if (stop_requested) [[unlikely]] {
-            stop_requested = false;
-            LOG_INFO(logger, "Received SIGTERM");
-            break;
-        }
-    }
 
     if (_metrics_on_stop) {
         std::cerr << metric_registry << std::flush;
