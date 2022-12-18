@@ -17,12 +17,12 @@ IgnoreWarnings(doctest)
 
 #------------------------------------------------------------------------------
 # Quill - Asynchronous Low Latency C++ Logging Library
-FetchContent_Declare(
-        quill
-        GIT_REPOSITORY https://github.com/odygrd/quill.git
-        GIT_TAG v2.0.2
-        UPDATE_DISCONNECTED TRUE
-        GIT_SHALLOW TRUE
+fetchcontent_declare(
+    quill
+    GIT_REPOSITORY https://github.com/odygrd/quill.git
+    GIT_TAG v2.5.1
+    UPDATE_DISCONNECTED TRUE
+    GIT_SHALLOW TRUE
 )
 
 FetchContent_Populate(quill)
@@ -32,11 +32,11 @@ IgnoreWarnings(quill)
 
 #------------------------------------------------------------------------------
 #  argparse - Argument Parser for Modern C++
-FetchContent_Declare(
-        argparse
-        GIT_REPOSITORY https://github.com/p-ranav/argparse.git
-        GIT_TAG v2.6
-        UPDATE_DISCONNECTED TRUE
+fetchcontent_declare(
+    argparse
+    GIT_REPOSITORY https://github.com/p-ranav/argparse.git
+    GIT_TAG v2.9
+    UPDATE_DISCONNECTED TRUE
     GIT_SHALLOW TRUE
 )
 
