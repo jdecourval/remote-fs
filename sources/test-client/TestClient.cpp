@@ -45,7 +45,11 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
     auto read_buffer_view = buffers.first->view();
     auto write_buffer_view = buffers.second->view();
 
-    uring.write(socket, write_buffer_view, [](int32_t syscall_ret) mutable { assert(syscall_ret >= 0); });
+    uring.write(socket, write_buffer_view, [](int32_t syscall_ret) mutable {
+        if (syscall_ret < 0) {
+            throw std::system_error(-syscall_ret, std::system_category(), "Failed to write to socket");
+        }
+    });
 
     uring.read(socket, read_buffer_view, 0, [this, max_size_thread](int32_t syscall_ret) mutable {
         if (measure_latency) {
@@ -80,8 +84,8 @@ void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout
                 }
 
                 while (!stop_token.stop_requested() && *thread.stages_running > 0) [[likely]] {
-                        thread.uring.queue_wait(min_batch_size, wait_timeout);
-                    }
+                    thread.uring.queue_wait(min_batch_size, wait_timeout);
+                }
                 auto thread_time = std::chrono::duration_cast<std::chrono::duration<double>>(
                     std::chrono::high_resolution_clock::now() - thread.start);
                 std::cout << "thread-time:" << to_engineering_string(thread_time.count(), 3, eng_prefixed, "s")
