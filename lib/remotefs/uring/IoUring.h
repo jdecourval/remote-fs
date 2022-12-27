@@ -59,10 +59,13 @@ class IoUring {
     void read(int fd, std::span<char> destination, size_t offset, Callable&& callable);
 
     template <typename Callable>
-    void read_fixed(int fd, std::span<char> destination, size_t offset, Callable&& callable);
+    void read_fixed(int fd, std::span<char> destination, int buffer_index, size_t offset, Callable&& callable);
 
     template <typename Callable>
     void write(int fd, std::span<const char> source, Callable&& callable);
+
+    template <typename Callable>
+    void write_fixed(int fd, std::span<const char> source, int buffer_index, Callable&& callable);
 
     template <typename Callable, size_t size>
     void write_vector(int fd, std::span<const iovec, size> sources, Callable&& callable);
@@ -71,7 +74,8 @@ class IoUring {
                     std::chrono::nanoseconds wait_timeout = wait_timeout_default);
 
     void register_ring();
-    void register_buffer(std::span<char> buffer);
+    void register_sparse_buffers(int count);
+    void assign_buffer(int idx, std::span<char> buffer);
 
    private:
     io_uring ring{};
@@ -118,10 +122,10 @@ void IoUring::read(int fd, std::span<char> destination, size_t offset, Callable&
 }
 
 template <typename Callable>
-void IoUring::read_fixed(int fd, std::span<char> destination, size_t offset, Callable&& callable) {
+void IoUring::read_fixed(int fd, std::span<char> destination, int buffer_index, size_t offset, Callable&& callable) {
     auto callback = new CallbackWithPointer<Callable>{std::forward<Callable>(callable)};
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
-        io_uring_prep_read_fixed(sqe, fd, destination.data(), destination.size(), offset, 0);
+        io_uring_prep_read_fixed(sqe, fd, destination.data(), destination.size(), offset, buffer_index);
         io_uring_sqe_set_data(sqe, callback);
     }
 }
@@ -131,6 +135,15 @@ void IoUring::write(int fd, std::span<const char> source, Callable&& callable) {
     auto callback = new CallbackWithPointer<Callable>{std::forward<Callable>(callable)};
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
         io_uring_prep_write(sqe, fd, source.data(), source.size(), 0);
+        io_uring_sqe_set_data(sqe, callback);
+    }
+}
+
+template <typename Callable>
+void IoUring::write_fixed(int fd, std::span<const char> source, int buffer_index, Callable&& callable) {
+    auto callback = new CallbackWithPointer<Callable>{std::forward<Callable>(callable)};
+    if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
+        io_uring_prep_write_fixed(sqe, fd, source.data(), source.size(), 0, buffer_index);
         io_uring_sqe_set_data(sqe, callback);
     }
 }

@@ -255,15 +255,6 @@ void Syscalls::release(messages::requests::Release& message) {
     InodeCache::close(inode);
 }
 
-void Syscalls::ping(std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer, int socket) {
-    auto& message = *reinterpret_cast<messages::both::Ping*>(buffer->data());
-    //    message.middle = std::chrono::high_resolution_clock::now();
-    uring.write(socket, message.view(), [buffer = std::move(buffer)](int ret) {
-        if (ret == -EPIPE) [[unlikely]] {
-        } else if (ret < 0) [[unlikely]] {
-            throw std::system_error(-ret, std::system_category(), "Failed to write to socket");
-        }
-    });
-}
+void Syscalls::ping(std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer, int socket) {}
 
 }  // namespace remotefs

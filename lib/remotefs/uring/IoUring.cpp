@@ -43,7 +43,11 @@ void remotefs::IoUring::queue_wait(int min_batch_size, std::chrono::nanoseconds 
         assert(cqe);
         ++completed;
         auto callback = reinterpret_cast<CallbackErased*>(io_uring_cqe_get_data(cqe));
-        (*callback)(cqe->res);
+        if (callback != nullptr) {
+            (*callback)(cqe->res);
+        } else {
+            std::cout << "nullptr, flags:" << cqe->flags << ", res:" << cqe->res << std::endl;
+        }
         if (!(cqe->flags & IORING_CQE_F_MORE)) {
             delete callback;
         }
@@ -51,14 +55,22 @@ void remotefs::IoUring::queue_wait(int min_batch_size, std::chrono::nanoseconds 
     io_uring_cq_advance(&ring, completed);
 }
 
-void remotefs::IoUring::register_buffer(std::span<char> buffer) {
-    auto buffer_descriptor = iovec{.iov_base = buffer.data(), .iov_len = buffer.size()};
-
-    io_uring_register_buffers(&ring, &buffer_descriptor, 1);
-}
-
 void remotefs::IoUring::register_ring() {
     if (auto ret = io_uring_register_ring_fd(&ring); ret < 0) {
         throw std::system_error(-ret, std::generic_category(), "Failed to register queue fd");
+    }
+}
+
+void remotefs::IoUring::register_sparse_buffers(int count) {
+    if (auto ret = io_uring_register_buffers_sparse(&ring, count); ret < 0) {
+        throw std::system_error(-ret, std::generic_category(), "Failed to register buffers");
+    }
+}
+
+void remotefs::IoUring::assign_buffer(int idx, std::span<char> buffer) {
+    auto buffer_descriptor = iovec{.iov_base = buffer.data(), .iov_len = buffer.size()};
+
+    if (auto ret = io_uring_register_buffers_update_tag(&ring, idx, &buffer_descriptor, nullptr, 1); ret < 0) {
+        throw std::system_error(-ret, std::generic_category(), "Failed to update a registered buffer");
     }
 }
