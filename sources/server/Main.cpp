@@ -78,9 +78,10 @@ int main(int argc, char* argv[]) {
         .scan<'d', int>()
         .default_value(remotefs::IoUring::queue_depth_default);
     program.add_argument("-B", "--register-buffers")
-        .help("Register buffers in io uring.")
-        .default_value(false)
-        .implicit_value(true);
+        .help("This amount of sparse buffers will be registered in io uring per thread.")
+        .scan<'d', int>()
+        .implicit_value(64)
+        .default_value(64);
     program.add_argument("-V", "--register-sockets")
         .help("Register sockets in io uring.")
         .default_value(false)
@@ -105,7 +106,8 @@ int main(int argc, char* argv[]) {
         std::exit(1);
     }
 
-    quill::enable_console_colours();
+    auto cfg = quill::Config{.enable_console_colours = true};
+    quill::configure(cfg);
     quill::start(true);
 
     quill::Logger* logger = quill::get_logger();
@@ -141,21 +143,28 @@ int main(int argc, char* argv[]) {
                                                     program.get<bool>("--disable-fragment")};
 
     auto server = remotefs::Server(program.get("address"), program.get<int>("port"), socket_options,
-                                   program.get<bool>("--metrics"), program.get<int>("--ring-depth"));
+                                   program.get<bool>("--metrics"), program.get<int>("--ring-depth"),
+                                   program.get<int>("--register-buffers"));
 
     LOG_DEBUG(logger, "Ready to start");
-    auto threads = std::vector<std::jthread>{};
-    for (auto i = 0; i < program.get<int>("--threads"); i++) {
-        threads.emplace_back([&] {
-            server.start(program.get<int>("--pipeline"), program.get<int>("--min-batch"),
-                         std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
-                         program.get<bool>("--register-ring"));
-        });
-    }
+    if (program.get<int>("--threads") > 1) {
+        auto threads = std::vector<std::jthread>{};
+        for (auto i = 0; i < program.get<int>("--threads"); i++) {
+            threads.emplace_back([&] {
+                server.start(program.get<int>("--pipeline"), program.get<int>("--min-batch"),
+                             std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
+                             program.get<bool>("--register-ring"));
+            });
+        }
 
-    LOG_INFO(logger, "Waiting for workers");
-    for (auto& thread : threads) {
-        thread.join();
+        LOG_INFO(logger, "Waiting for workers");
+        for (auto& thread : threads) {
+            thread.join();
+        }
+    } else {
+        server.start(program.get<int>("--pipeline"), program.get<int>("--min-batch"),
+                     std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
+                     program.get<bool>("--register-ring"));
     }
 
     LOG_DEBUG(logger, "Cleanly exited");

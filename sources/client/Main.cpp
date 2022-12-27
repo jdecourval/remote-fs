@@ -3,7 +3,8 @@
 #include "Client.h"
 
 int main(int argc, char* argv[]) {
-    quill::enable_console_colours();
+    auto cfg = quill::Config{.enable_console_colours = true};
+    quill::configure(cfg);
     quill::start(true);
 
     quill::Logger* logger = quill::get_logger();

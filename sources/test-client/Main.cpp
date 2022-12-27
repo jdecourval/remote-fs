@@ -55,7 +55,7 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
         .help("Fragment chunks on the network to at most this big (bytes). Default to the PMTU.")
         .default_value(0);
     parser.add_argument("-p", "--pipeline")
-        .help("How many operations per thread, socket and stream to schedule at a time.")
+        .help("How many operations per thread, socket and stream to schedule at a time.")  // TODO: Queue depth
         .default_value(1)
         .scan<'d', int>();
     parser.add_argument("-n", "--nagle")
@@ -126,7 +126,8 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
 }
 
 int main(int argc, char* argv[]) {
-    quill::enable_console_colours();
+    auto cfg = quill::Config{.enable_console_colours = true};
+    quill::configure(cfg);
     quill::start(true);
     quill::Logger* logger = quill::get_logger();
     logger->init_backtrace(2, quill::LogLevel::Critical);
