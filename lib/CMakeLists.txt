@@ -13,6 +13,7 @@ add_library(remotefs
     remotefs/uring/IoUring.cpp
     remotefs/sockets/Socket.cpp
     remotefs/sockets/Socket.h
+    remotefs/tools/NarrowCast.h
     )
 
 set_target_properties(remotefs PROPERTIES LINKER_LANGUAGE CXX)
