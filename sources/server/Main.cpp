@@ -82,6 +82,11 @@ int main(int argc, char* argv[]) {
         .scan<'d', int>()
         .implicit_value(64)
         .default_value(64);
+    program.add_argument("--cached-buffers")
+        .help("Cache this number of buffers in the application instead of returning them to the memory allocator.")
+        .scan<'d', int>()
+        .implicit_value(64)
+        .default_value(64);
     program.add_argument("-V", "--register-sockets")
         .help("Register sockets in io uring.")
         .default_value(false)
@@ -144,7 +149,7 @@ int main(int argc, char* argv[]) {
 
     auto server = remotefs::Server(program.get("address"), program.get<int>("port"), socket_options,
                                    program.get<bool>("--metrics"), program.get<int>("--ring-depth"),
-                                   program.get<int>("--register-buffers"));
+                                   program.get<int>("--register-buffers"), program.get<int>("--cached-buffers"));
 
     LOG_DEBUG(logger, "Ready to start");
     if (program.get<int>("--threads") > 1) {

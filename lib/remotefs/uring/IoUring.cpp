@@ -67,7 +67,7 @@ void remotefs::IoUring::register_sparse_buffers(int count) {
     }
 }
 
-void remotefs::IoUring::assign_buffer(int idx, std::span<char> buffer) {
+void remotefs::IoUring::assign_buffer(int idx, std::span<std::byte> buffer) {
     auto buffer_descriptor = iovec{.iov_base = buffer.data(), .iov_len = buffer.size()};
 
     if (auto ret = io_uring_register_buffers_update_tag(&ring, idx, &buffer_descriptor, nullptr, 1); ret < 0) {

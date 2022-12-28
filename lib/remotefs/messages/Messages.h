@@ -11,9 +11,9 @@
 namespace remotefs::messages {
 namespace both {
 class Ping {
-    [[maybe_unused]] const uint8_t tag = 7;  // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
+    [[maybe_unused]] const std::byte tag = std::byte{7};  // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
     int buffer_size;
-    [[maybe_unused]] char buffer[];  // NOLINT(cppcoreguidelines-avoid-c-arrays)
+    [[maybe_unused]] std::byte buffer[];  // NOLINT(cppcoreguidelines-avoid-c-arrays)
 
    public:
     static void* operator new(std::size_t, std::size_t total_size) {
@@ -29,12 +29,12 @@ class Ping {
         return sizeof(*this) + buffer_size;
     }
 
-    [[nodiscard]] std::span<const char> view() const {
-        return {reinterpret_cast<const char*>(this), size()};
+    [[nodiscard]] std::span<const std::byte> view() const {
+        return {reinterpret_cast<const std::byte*>(this), size()};
     }
 
-    [[nodiscard]] std::span<char> view() {
-        return {reinterpret_cast<char*>(this), size()};
+    [[nodiscard]] std::span<std::byte> view() {
+        return {reinterpret_cast<std::byte*>(this), size()};
     }
 
     explicit Ping(std::size_t total_size)
@@ -43,27 +43,27 @@ class Ping {
 }  // namespace both
 namespace requests {
 struct Open {
-    const uint8_t tag = 1;
+    const std::byte tag = std::byte{1};
     fuse_req_t req;
     fuse_ino_t ino;
     fuse_file_info file_info;
 };
 
 struct Lookup {
-    uint8_t tag = 2;
+    std::byte tag = std::byte{2};
     fuse_req_t req;
     fuse_ino_t ino;
     char path[];
 };
 
 struct GetAttr {
-    const uint8_t tag = 3;
+    const std::byte tag = std::byte{3};
     fuse_req_t req;
     fuse_ino_t ino;
 };
 
 struct ReadDir {
-    const uint8_t tag = 4;
+    const std::byte tag = std::byte{4};
     fuse_req_t req;
     fuse_ino_t ino;
     size_t size;
@@ -71,7 +71,7 @@ struct ReadDir {
 };
 
 struct Read {
-    const uint8_t tag = 5;
+    const std::byte tag = std::byte{5};
     fuse_req_t req;
     fuse_ino_t ino;
     size_t size;
@@ -79,7 +79,7 @@ struct Read {
 };
 
 struct Release {
-    const uint8_t tag = 6;
+    const std::byte tag = std::byte{6};
     fuse_req_t req;
     fuse_ino_t ino;
 };
@@ -92,7 +92,8 @@ struct FuseReplyEntry {
     explicit FuseReplyEntry(fuse_req_t r, fuse_entry_param f)
         : req{r},
           attr{f} {}
-    const uint8_t tag = 1;
+
+    const std::byte tag = std::byte{1};
     fuse_req_t req;
     fuse_entry_param attr;
 };
@@ -101,7 +102,8 @@ struct FuseReplyAttr {
     FuseReplyAttr(auto r, auto a)
         : req{r},
           attr{a} {}
-    const uint8_t tag = 2;
+
+    const std::byte tag = std::byte{2};
     fuse_req_t req;
     struct stat attr;
 };
@@ -110,7 +112,8 @@ struct FuseReplyOpen {
     FuseReplyOpen(auto r, auto f)
         : req{r},
           file_info(f) {}
-    const uint8_t tag = 3;
+
+    const std::byte tag = std::byte{3};
     fuse_req_t req;
     fuse_file_info file_info;
 };
@@ -125,21 +128,21 @@ struct FuseReplyBuf {
         : req{r},
           data_size{d} {}
 
-    const uint8_t tag = 4;
+    const std::byte tag = std::byte{4};
     int data_size{};
     fuse_req_t req;
     // TODO: This is wrong, as it ignores padding
     // TODO: 8 for vtable: remove! 20=hack for missing paddings
     static constexpr int MAX_PAYLOAD_SIZE = max_size - sizeof(tag) - sizeof(data_size) - 8 - 20;
     static_assert(MAX_PAYLOAD_SIZE > 0);
-    std::array<char, MAX_PAYLOAD_SIZE> data;
+    std::array<std::byte, MAX_PAYLOAD_SIZE> data;
 
     [[nodiscard]] int free_space() const {
         return MAX_PAYLOAD_SIZE - data_size;
     }
 
     [[nodiscard]] size_t size() const {
-        return reinterpret_cast<const char*>(&data) - reinterpret_cast<const char*>(this) + data_size;
+        return reinterpret_cast<const std::byte*>(&data) - reinterpret_cast<const std::byte*>(this) + data_size;
     }
 };
 #pragma clang diagnostic pop
@@ -148,7 +151,8 @@ struct FuseReplyErr {
     FuseReplyErr(fuse_req_t r, int e)
         : req(r),
           error_code(e) {}
-    const uint8_t tag = 5;
+
+    const std::byte tag = std::byte{5};
     fuse_req_t req;
     int error_code;
 };

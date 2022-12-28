@@ -46,7 +46,7 @@ void Syscalls::lookup(messages::requests::Lookup& message, int socket) {
                                                                               .attr = found->second.stat,
                                                                               .attr_timeout = 1,
                                                                               .entry_timeout = 1}});
-        auto response_view = std::span{reinterpret_cast<char*>(response.get()), sizeof(*response)};
+        auto response_view = std::span{reinterpret_cast<std::byte*>(response.get()), sizeof(*response)};
         uring.write(socket, response_view, [response = std::move(response)](int) {});
         return;
     }
@@ -69,7 +69,7 @@ void Syscalls::lookup(messages::requests::Lookup& message, int socket) {
             LOG_DEBUG(logger, "queue_statx callback failure, ret={}: ", -ret, std::strerror(-ret));
             auto response =
                 std::make_unique<messages::responses::FuseReplyErr>(messages::responses::FuseReplyErr{req, -ret});
-            auto response_view = std::span{reinterpret_cast<char*>(response.get()), sizeof(*response)};
+            auto response_view = std::span{reinterpret_cast<std::byte*>(response.get()), sizeof(*response)};
             uring.write(socket, response_view, [response = std::move(response)](int) {});
             return;
         }
@@ -84,7 +84,7 @@ void Syscalls::lookup(messages::requests::Lookup& message, int socket) {
             .attr_timeout = 1,
             .entry_timeout = 1};
         response->attr.attr.st_ino = response->attr.ino;
-        auto response_view = std::span{reinterpret_cast<char*>(response.get()), sizeof(*response)};
+        auto response_view = std::span{reinterpret_cast<std::byte*>(response.get()), sizeof(*response)};
         LOG_TRACE_L2(logger, "Sending FuseReplyEntry req={}, ino={}", reinterpret_cast<uintptr_t>(response->req),
                      response->attr.ino);
         uring.write(socket, response_view, [response = std::move(response)](int) {});
@@ -95,7 +95,7 @@ void Syscalls::getattr(messages::requests::GetAttr& message, int socket) {
     const auto& entry = inode_cache.inode_from_ino(message.ino);
     auto response = std::make_unique<messages::responses::FuseReplyAttr>(
         messages::responses::FuseReplyAttr{message.req, entry.second.stat});
-    auto response_view = std::span{reinterpret_cast<char*>(response.get()), sizeof(*response)};
+    auto response_view = std::span{reinterpret_cast<std::byte*>(response.get()), sizeof(*response)};
     LOG_TRACE_L2(logger, "Sending FuseReplyAttr req={}, ino={}", reinterpret_cast<uintptr_t>(response->req),
                  entry.second.stat.st_ino);
     uring.write(socket, response_view, [response = std::move(response)](int) {});
@@ -117,8 +117,9 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
     if (off == 1) {  // off must start at 1
         LOG_TRACE_L3(logger, "Adding . to buffer");
         auto free_space = response->free_space();
-        auto entry_size = fuse_add_direntry(nullptr, response->data.data() + response->data_size,
-                                            response->free_space(), ".", &root_entry.second.stat, off);
+        auto entry_size =
+            fuse_add_direntry(nullptr, reinterpret_cast<char*>(response->data.data() + response->data_size),
+                              response->free_space(), ".", &root_entry.second.stat, off);
         assert(entry_size <= response->data.size());
         assert(entry_size <= free_space);
 
@@ -126,7 +127,7 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
         off++;
         if ((total_size += entry_size) >= size) {
             LOG_TRACE_L1(logger, "readdir responded with {} parts and size", off - message.offset - 1, total_size);
-            auto response_view = std::span{reinterpret_cast<char*>(response.get()), response->size()};
+            auto response_view = std::span{reinterpret_cast<std::byte*>(response.get()), response->size()};
             LOG_TRACE_L2(logger, "Sending FuseReplyBuf req={}, size={}", reinterpret_cast<uintptr_t>(response->req),
                          response->data_size);
             uring.write(socket, response_view, [response = std::move(response)](int) {});
@@ -142,8 +143,9 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
         // Other fields are not currently used by fuse
         stbuf.st_ino = 1;
         stbuf.st_mode = std::to_underlying(permissions);
-        auto entry_size = fuse_add_direntry(nullptr, response->data.data() + response->data_size,
-                                            response->free_space(), "..", &stbuf, off);
+        auto entry_size =
+            fuse_add_direntry(nullptr, reinterpret_cast<char*>(response->data.data()) + response->data_size,
+                              response->free_space(), "..", &stbuf, off);
         assert(entry_size <= response->data.size());
         assert(entry_size <= free_space);
 
@@ -151,7 +153,7 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
         off++;
         if ((total_size += entry_size) >= size) {
             LOG_TRACE_L1(logger, "readdir responded with {} parts and size", off - message.offset - 1, total_size);
-            auto response_view = std::span{reinterpret_cast<char*>(response.get()), response->size()};
+            auto response_view = std::span{reinterpret_cast<std::byte*>(response.get()), response->size()};
             LOG_TRACE_L2(logger, "Sending FuseReplyBuf req={}, size={}", reinterpret_cast<uintptr_t>(response->req),
                          response->data_size);
             uring.write(socket, response_view, [response = std::move(response)](int) {});
@@ -169,15 +171,16 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
         stbuf.st_ino = 2;  // This is of course wrong
         stbuf.st_mode = std::to_underlying(permissions);
         // fuse_req_t is ignored (1st parameter)
-        auto entry_size = fuse_add_direntry(nullptr, response->data.data() + response->data_size,
-                                            response->free_space(), filename.c_str(), &stbuf, off);
+        auto entry_size =
+            fuse_add_direntry(nullptr, reinterpret_cast<char*>(response->data.data()) + response->data_size,
+                              response->free_space(), filename.c_str(), &stbuf, off);
         assert(entry_size <= free_space);
         response->data_size += entry_size;
         ++off;
 
         if ((total_size += entry_size) >= size) {
             LOG_TRACE_L1(logger, "readdir responded with {} parts and size {}", off - message.offset - 1, total_size);
-            auto response_view = std::span{reinterpret_cast<char*>(response.get()), response->size()};
+            auto response_view = std::span{reinterpret_cast<std::byte*>(response.get()), response->size()};
             LOG_TRACE_L2(logger, "Sending FuseReplyBuf req={}, size={}", reinterpret_cast<uintptr_t>(response->req),
                          response->data_size);
             uring.write(socket, response_view, [response = std::move(response)](int) {});
@@ -185,7 +188,7 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
         }
     }
 
-    auto response_view = std::span{reinterpret_cast<char*>(response.get()), response->size()};
+    auto response_view = std::span{reinterpret_cast<std::byte*>(response.get()), response->size()};
     LOG_TRACE_L2(logger, "Sending FuseReplyBuf req={}, size={}", reinterpret_cast<uintptr_t>(response->req),
                  response->data_size);
     uring.write(socket, response_view, [response = std::move(response)](int) {});
@@ -209,7 +212,7 @@ void Syscalls::read(messages::requests::Read& message, int socket) {
     uring.read(file_handle, buffer, off, [this, socket, response = std::move(response)](int ret) mutable {
         if (ret >= 0) [[likely]] {
             response->data_size = ret;
-            auto response_view = std::span{reinterpret_cast<char*>(response.get()), response->size()};
+            auto response_view = std::span{reinterpret_cast<std::byte*>(response.get()), response->size()};
             LOG_TRACE_L2(logger, "Sending FuseReplyBuf req={}, size={}", reinterpret_cast<uintptr_t>(response->req),
                          response->data_size);
             uring.write(socket, response_view, [response = std::move(response)](int ret) {
@@ -220,7 +223,7 @@ void Syscalls::read(messages::requests::Read& message, int socket) {
         } else {
             auto error_response = std::make_unique<messages::responses::FuseReplyErr>(
                 messages::responses::FuseReplyErr{response->req, -ret});
-            auto response_view = std::span{reinterpret_cast<char*>(error_response.get()), sizeof(*error_response)};
+            auto response_view = std::span{reinterpret_cast<std::byte*>(error_response.get()), sizeof(*error_response)};
             LOG_TRACE_L2(logger, "Sending FuseReplyErr");
             uring.write(socket, response_view, [error_response = std::move(error_response)](int) {});
         }
@@ -238,12 +241,12 @@ void Syscalls::open(messages::requests::Open& message, int socket) {
         InodeCache::open(inode);  // TODO: Handle errors
         auto response = std::make_unique<messages::responses::FuseReplyOpen>(
             messages::responses::FuseReplyOpen{message.req, file_info});
-        auto response_view = std::span{reinterpret_cast<char*>(response.get()), sizeof(*response)};
+        auto response_view = std::span{reinterpret_cast<std::byte*>(response.get()), sizeof(*response)};
         LOG_TRACE_L2(logger, "Sending FuseReplyOpen");
         uring.write(socket, response_view, [response = std::move(response)](int) {});
     } else {
         auto response = std::make_unique<messages::responses::FuseReplyErr>(message.req, EACCES);
-        auto response_view = std::span{reinterpret_cast<char*>(response.get()), sizeof(*response)};
+        auto response_view = std::span{reinterpret_cast<std::byte*>(response.get()), sizeof(*response)};
         LOG_TRACE_L2(logger, "Sending FuseReplyErr");
         uring.write(socket, response_view, [response = std::move(response)](int) {});
     }
@@ -255,6 +258,6 @@ void Syscalls::release(messages::requests::Release& message) {
     InodeCache::close(inode);
 }
 
-void Syscalls::ping(std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer, int socket) {}
+void Syscalls::ping(std::unique_ptr<std::array<std::byte, settings::MAX_MESSAGE_SIZE>>&& buffer, int socket) {}
 
 }  // namespace remotefs

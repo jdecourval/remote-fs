@@ -2,6 +2,7 @@
 #define REMOTE_FS_SERVER_H
 
 #include <string>
+#include <vector>
 
 #include "Config.h"
 #include "Syscalls.h"
@@ -16,50 +17,72 @@ class Logger;
 namespace remotefs {
 
 class Server {
+    using BufferStorage = std::array<std::byte, settings::MAX_MESSAGE_SIZE>;
+
     class RegisteredBuffer {
        public:
-        explicit RegisteredBuffer(int idx)  // NOLINT(cppcoreguidelines-pro-type-member-init)
-            : index{idx} {}
+        RegisteredBuffer()
+            : buffer{nullptr},
+              index{-1} {}
+
+        explicit RegisteredBuffer(int idx)
+            : buffer{new BufferStorage},
+              index{idx} {}
+
+        RegisteredBuffer(BufferStorage* _buffer, int idx)
+            : buffer{_buffer},
+              index{idx} {}
+
+        RegisteredBuffer(const RegisteredBuffer&) = delete;
+
+        RegisteredBuffer(RegisteredBuffer&& source) noexcept {
+            std::swap(buffer, source.buffer);
+            std::swap(index, source.index);
+        }
+
+        RegisteredBuffer& operator=(RegisteredBuffer&& source) {
+            index = -1;
+            buffer = nullptr;
+            std::swap(buffer, source.buffer);
+            std::swap(index, source.index);
+            return *this;
+        }
+
+        RegisteredBuffer& operator=(const RegisteredBuffer&) = delete;
 
         ~RegisteredBuffer();
 
-        std::span<char> view();
-
-        [[nodiscard]] std::span<const char> view() const;
-
+        [[nodiscard]] bool is_registered() const;
+        [[nodiscard]] bool is_owner() const;
         [[nodiscard]] int get_index() const;
+        [[nodiscard]] std::span<std::byte> view();
+        [[nodiscard]] std::span<const std::byte> view() const;
+        [[nodiscard]] RegisteredBuffer non_owning_copy() const;
+        [[nodiscard]] explicit operator bool() const;
 
        private:
-        std::array<char, settings::MAX_MESSAGE_SIZE> storage;
-        int index;
+        std::variant<BufferStorage*, std::unique_ptr<BufferStorage>> buffer;
+        int index = -1;
     };
 
    public:
     explicit Server(const std::string& address, int port, const Socket::Options& socket_options,
                     bool metrics_on_stop = false, int ring_depth = remotefs::IoUring::queue_depth_default,
-                    int max_registered_buffers = 64);
+                    int max_registered_buffers = 64, int cached_buffers = 64);
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;
     void start(int pipeline, int min_batch_size, std::chrono::nanoseconds wait_timeout, bool register_ring);
-    void read_callback(int syscall_ret, Socket&& client_socket, std::unique_ptr<RegisteredBuffer> buffer);
+    void read_callback(int syscall_ret, Socket&& client_socket, RegisteredBuffer&& buffer);
     void accept_callback(int syscall_ret, int pipeline);
 
     template <typename Callable>
-    void read(Socket&& client_socket, int offset, std::unique_ptr<RegisteredBuffer> buffer, Callable&& callback);
+    void read(int client_socket, int offset, RegisteredBuffer&& buffer, Callable&& callback);
 
     template <typename Callable>
-    void read(Socket&& client_socket, int offset, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>> buffer,
-              Callable&& callback);
-
-    template <typename Callable>
-    void write(Socket&& client_socket, std::unique_ptr<RegisteredBuffer> buffer, Callable&& callback);
-
-    template <typename Callable>
-    void write(Socket&& client_socket, int offset, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>> buffer,
-               Callable&& callback);
+    void write(int client_socket, RegisteredBuffer&& buffer, Callable&& callback);
 
    private:
-    std::unique_ptr<RegisteredBuffer> new_registered_buffer();
+    RegisteredBuffer new_registered_buffer();
 
     remotefs::Socket socket;
     quill::Logger* logger;
@@ -67,6 +90,7 @@ class Server {
     IoUring io_uring;
     Syscalls syscalls;
     volatile int read_counter = 0;
+    std::vector<RegisteredBuffer> buffers_cache;  // Enable only on flag
     bool _metrics_on_stop;
 };
 
