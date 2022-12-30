@@ -43,12 +43,15 @@ void remotefs::IoUring::queue_wait(int min_batch_size, std::chrono::nanoseconds 
         assert(cqe);
         ++completed;
         auto callback = reinterpret_cast<CallbackErased*>(io_uring_cqe_get_data(cqe));
+        auto skip_delete = reinterpret_cast<uintptr_t>(callback) & 0b1;
+        (*reinterpret_cast<uintptr_t*>(&callback)) &= (std::numeric_limits<uintptr_t>::max() << 1);  //
+
         if (callback != nullptr) {
             (*callback)(cqe->res);
         } else {
             std::cout << "nullptr, flags:" << cqe->flags << ", res:" << cqe->res << std::endl;
         }
-        if (!(cqe->flags & IORING_CQE_F_MORE)) {
+        if (!(cqe->flags & IORING_CQE_F_MORE) && !skip_delete) {
             delete callback;
         }
     }

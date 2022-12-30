@@ -80,12 +80,10 @@ int main(int argc, char* argv[]) {
     program.add_argument("-B", "--register-buffers")
         .help("This amount of sparse buffers will be registered in io uring per thread.")
         .scan<'d', int>()
-        .implicit_value(64)
         .default_value(64);
     program.add_argument("--cached-buffers")
         .help("Cache this number of buffers in the application instead of returning them to the memory allocator.")
         .scan<'d', int>()
-        .implicit_value(64)
         .default_value(64);
     program.add_argument("-V", "--register-sockets")
         .help("Register sockets in io uring.")

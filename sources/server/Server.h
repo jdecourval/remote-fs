@@ -72,14 +72,14 @@ class Server {
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;
     void start(int pipeline, int min_batch_size, std::chrono::nanoseconds wait_timeout, bool register_ring);
-    void read_callback(int syscall_ret, Socket&& client_socket, RegisteredBuffer&& buffer);
-    void accept_callback(int syscall_ret, int pipeline);
+    void read_callback(int syscall_ret, Socket&& client_socket, RegisteredBuffer&& buffer, std::span<std::byte> result);
+    void accept_callback(int client_socket, int pipeline);
 
     template <typename Callable>
     void read(int client_socket, int offset, RegisteredBuffer&& buffer, Callable&& callback);
 
     template <typename Callable>
-    void write(int client_socket, RegisteredBuffer&& buffer, Callable&& callback);
+    void write(int client_socket, RegisteredBuffer&& buffer, std::span<std::byte> source, Callable&& callback);
 
    private:
     RegisteredBuffer new_registered_buffer();

@@ -54,7 +54,11 @@ Server::Server(const std::string& address, int port, const Socket::Options& sock
 
     const auto available_bits = std::numeric_limits<decltype(active_registered_buffers)>::digits;
     assert(max_registered_buffers <= available_bits);
-    active_registered_buffers = ~decltype(active_registered_buffers){} >> (available_bits - max_registered_buffers);
+    // If the value of the right operand (of the shift) is greater or equal to the number of bits in the promoted left
+    // operand, the behavior is undefined
+    active_registered_buffers = max_registered_buffers == 0 ? 0
+                                                            : ~decltype(active_registered_buffers){} >>
+                                                                  (available_bits - max_registered_buffers);
 
     LOG_INFO(logger, "Binding to {}", address);
     socket = remotefs::Socket::listen(address, port, socket_options);
@@ -66,7 +70,7 @@ Server::RegisteredBuffer Server::new_registered_buffer() {
     if (index >= std::numeric_limits<decltype(active_registered_buffers)>::digits) {
         // no more index available
         LOG_TRACE_L1(logger, "No more index");
-        return RegisteredBuffer(index);
+        return RegisteredBuffer(-1);
     }
     active_registered_buffers ^= 0b1ull << index;
 
@@ -89,22 +93,27 @@ Server::RegisteredBuffer Server::new_registered_buffer() {
     return buffer;
 }
 
-void Server::accept_callback(int syscall_ret, int pipeline) {
-    if (syscall_ret >= 0) {
+void Server::accept_callback(int client_socket, int pipeline) {
+    if (client_socket >= 0) {
         LOG_INFO(logger, "Accepted a connection");
         for (auto i = 0; i < pipeline; i++) {
             auto buffer = new_registered_buffer();
-            read(syscall_ret, 0, std::move(buffer),
-                 [this, client_socket = Socket{syscall_ret}](int32_t syscall_ret, auto&& i) mutable {
-                     read_callback(syscall_ret, std::move(client_socket), std::forward<decltype(i)>(i));
+            read(client_socket, 0, std::move(buffer),
+                 [this, client_socket = Socket{client_socket}](int32_t syscall_ret, auto&& buffer,
+                                                               std::span<std::byte> data) mutable {
+                     read_callback(syscall_ret, std::move(client_socket), std::forward<decltype(buffer)>(buffer), data);
                  });
         }
     } else {
-        LOG_ERROR(logger, "Error accepting a connection {}", std::strerror(-syscall_ret));
+        LOG_ERROR(logger, "Error accepting a connection {}", std::strerror(-client_socket));
     }
 }
 
-void Server::read_callback(int syscall_ret, Socket&& client_socket, RegisteredBuffer&& buffer) {
+void Server::read_callback(int syscall_ret, Socket&& client_socket, RegisteredBuffer&& buffer,
+                           std::span<std::byte> result) {
+    // TODO: Perhaps RegisteredBuffer should contain an offset of where its data is located? That would avoid passing a
+    // span around.
+
     auto client_socket_int = static_cast<int>(client_socket);
 
     if (syscall_ret < 0) [[unlikely]] {
@@ -115,8 +124,9 @@ void Server::read_callback(int syscall_ret, Socket&& client_socket, RegisteredBu
 
         LOG_ERROR(logger, "Read failed, retrying: {}", std::strerror(-syscall_ret));
         read(client_socket_int, 0, std::move(buffer),
-             [this, client_socket = std::move(client_socket)](int32_t syscall_ret, auto&& i) mutable {
-                 read_callback(syscall_ret, std::move(client_socket), std::forward<decltype(i)>(i));
+             [this, client_socket = std::move(client_socket)](int32_t syscall_ret, auto&& buffer,
+                                                              std::span<std::byte> data) mutable {
+                 read_callback(syscall_ret, std::move(client_socket), std::forward<decltype(buffer)>(buffer), data);
              });
         return;
     }
@@ -126,34 +136,34 @@ void Server::read_callback(int syscall_ret, Socket&& client_socket, RegisteredBu
         return;
     }
 
-    LOG_TRACE_L1(logger, "Read {} bytes of {}", syscall_ret, static_cast<int>(buffer.view()[0]));
-    switch (buffer.view()[0]) {
+    LOG_TRACE_L1(logger, "Read {} bytes of {}", syscall_ret, static_cast<int>(result[0]));
+    switch (result[0]) {
         case messages::requests::Open().tag: {
-            syscalls.open(*reinterpret_cast<messages::requests::Open*>(buffer.view().data()), client_socket);
+            syscalls.open(*reinterpret_cast<messages::requests::Open*>(result.data()), client_socket);
             break;
         }
         case messages::requests::Lookup().tag: {
-            syscalls.lookup(*reinterpret_cast<messages::requests::Lookup*>(buffer.view().data()), client_socket);
+            syscalls.lookup(*reinterpret_cast<messages::requests::Lookup*>(result.data()), client_socket);
             break;
         }
         case messages::requests::GetAttr().tag: {
-            syscalls.getattr(*reinterpret_cast<messages::requests::GetAttr*>(buffer.view().data()), client_socket);
+            syscalls.getattr(*reinterpret_cast<messages::requests::GetAttr*>(result.data()), client_socket);
             break;
         }
         case messages::requests::ReadDir().tag: {
-            syscalls.readdir(*reinterpret_cast<messages::requests::ReadDir*>(buffer.view().data()), client_socket);
+            syscalls.readdir(*reinterpret_cast<messages::requests::ReadDir*>(result.data()), client_socket);
             break;
         }
         case messages::requests::Read().tag:
-            syscalls.read(*reinterpret_cast<messages::requests::Read*>(buffer.view().data()), client_socket);
+            syscalls.read(*reinterpret_cast<messages::requests::Read*>(result.data()), client_socket);
             break;
         case messages::requests::Release().tag:
-            syscalls.release(*reinterpret_cast<messages::requests::Release*>(buffer.view().data()));
+            syscalls.release(*reinterpret_cast<messages::requests::Release*>(result.data()));
             break;
         case std::byte{7}: {
-            //            auto& message = *reinterpret_cast<messages::both::Ping*>(buffer.view().data());
+            //            auto& message = *reinterpret_cast<messages::both::Ping*>(result.data());
             //    message.middle = std::chrono::high_resolution_clock::now();
-            write(client_socket_int, std::move(buffer), [](int ret, auto&&) {
+            write(client_socket_int, std::move(buffer), result, [](int ret) {
                 if (ret == -EPIPE) [[unlikely]] {
                     LOG_INFO(quill::get_logger(), "SIGPIPE, closing socket");
                 } else if (ret < 0) [[unlikely]] {
@@ -170,8 +180,9 @@ void Server::read_callback(int syscall_ret, Socket&& client_socket, RegisteredBu
     }
 
     read(client_socket_int, 0, std::move(buffer),
-         [this, client_socket = std::move(client_socket)](int32_t syscall_ret, auto&& buffer) mutable {
-             read_callback(syscall_ret, std::move(client_socket), std::forward<decltype(buffer)>(buffer));
+         [this, client_socket = std::move(client_socket)](int32_t syscall_ret, RegisteredBuffer&& buffer,
+                                                          std::span<std::byte> data) mutable {
+             read_callback(syscall_ret, std::move(client_socket), std::forward<decltype(buffer)>(buffer), data);
          });
 }
 
@@ -214,33 +225,48 @@ void Server::start(int pipeline, int min_batch_size, std::chrono::nanoseconds wa
 }
 
 template <typename Callable>
-void Server::write(int client_socket, RegisteredBuffer&& buffer, Callable&& callback) {
-    auto buffer_view = buffer.view();
+void Server::write(int client_socket, RegisteredBuffer&& buffer, std::span<std::byte> source, Callable&& callback) {
     auto buffer_index = buffer.get_index();
 
+    // Must capture buffer until the call is completed
     auto callback_with_buffer = [buffer = std::move(buffer), callback = std::forward<Callable>(callback)](int ret) {
-        return callback(ret, std::move(buffer));
+        return callback(ret);
     };
 
     if (buffer_index > 0) {
-        io_uring.write_fixed(client_socket, buffer_view, buffer_index, std::move(callback_with_buffer));
+        io_uring.write_fixed(client_socket, source, buffer_index, std::move(callback_with_buffer));
     } else {
-        io_uring.write(client_socket, buffer_view, std::move(callback_with_buffer));
+        io_uring.write(client_socket, source, std::move(callback_with_buffer));
     }
 }
 
 template <typename Callable>
 void Server::read(int client_socket, int offset, RegisteredBuffer&& buffer, Callable&& callback) {
-    auto buffer_view = buffer.view();
+    static_assert(std::is_invocable_v<Callable, int, RegisteredBuffer&&, std::span<std::byte>>);
+
+    auto buffer_total = buffer.view();
     auto buffer_index = buffer.get_index();
 
-    auto callback_with_buffer = [buffer = std::move(buffer), callback = std::forward<Callable>(callback)](
-                                    int ret) mutable { return callback(ret, std::move(buffer)); };
+    auto callback_ptr = new (buffer_total.data()) IoUring::CallbackWithPointer{
+        [buffer = std::move(buffer), callback = std::forward<Callable>(callback),
+         buffer_location = std::span<std::byte>{}](int res, std::span<std::byte> set = {}) mutable {
+            if (!set.empty()) {
+                buffer_location = set;
+                return;
+            }
 
-    if (buffer_index > 0) {
-        io_uring.read_fixed(client_socket, buffer_view, buffer_index, offset, std::move(callback_with_buffer));
+            assert(!buffer_location.empty());
+            callback(res, std::move(buffer), buffer_location);
+        }};
+
+    auto buffer_available =
+        buffer_total.subspan(std::distance(reinterpret_cast<std::byte*>(callback_ptr), callback_ptr->buffer));
+    callback_ptr->callable(0, buffer_available);  // Nasty hack, I know.
+
+    if (buffer_index >= 0) {
+        io_uring.read_fixed(client_socket, buffer_available, buffer_index, offset, callback_ptr);
     } else {
-        io_uring.read(client_socket, buffer_view, offset, std::move(callback_with_buffer));
+        io_uring.read(client_socket, buffer_available, offset, callback_ptr);
     }
 }
 

@@ -4,6 +4,7 @@
 #include <poll.h>
 #include <sys/epoll.h>
 
+#include <cassert>
 #include <type_traits>
 
 #include "cstdlib"
@@ -21,6 +22,7 @@ class IoUring {
     static constexpr auto wait_min_batch_size_default = 1;
     static constexpr auto wait_timeout_default = std::chrono::seconds{1};
     static constexpr auto max_wait_min_batch_size = 16;  // Compile time limit
+    static constexpr auto buffers_alignment = 1;
 
     struct CallbackErased {
         virtual void operator()(int res) = 0;
@@ -31,12 +33,18 @@ class IoUring {
     template <class Callable>
     struct CallbackWithPointer final : public CallbackErased {
         static_assert(std::is_invocable_v<Callable, int>);
+
         void inline operator()(int res) final {
             callable(res);
         }
+
         explicit CallbackWithPointer(Callable&& c)
             : callable{std::move(c)} {}
+
         Callable callable;
+        // TODO: Increasing the alignment increase the class's size even if buffer is unused.
+        //  no_unique_address doesn't seem to work for addressing this issue on any compiler
+        alignas(buffers_alignment) std::byte buffer[];  // NOLINT(cppcoreguidelines-avoid-c-arrays), no FAM in C++
     };
 
     explicit IoUring(int queue_depth = queue_depth_default);
@@ -60,6 +68,13 @@ class IoUring {
 
     template <typename Callable>
     void read_fixed(int fd, std::span<std::byte> destination, int buffer_index, size_t offset, Callable&& callable);
+
+    template <typename Callable>
+    void read(int fd, std::span<std::byte> destination, size_t offset, CallbackWithPointer<Callable>* callable);
+
+    template <typename Callable>
+    void read_fixed(int fd, std::span<std::byte> destination, int buffer_index, size_t offset,
+                    CallbackWithPointer<Callable>* callable);
 
     template <typename Callable>
     void write(int fd, std::span<const std::byte> source, Callable&& callable);
@@ -128,6 +143,27 @@ void IoUring::read_fixed(int fd, std::span<std::byte> destination, int buffer_in
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
         io_uring_prep_read_fixed(sqe, fd, destination.data(), destination.size(), offset, buffer_index);
         io_uring_sqe_set_data(sqe, callback);
+    }
+}
+
+template <typename Callable>
+void IoUring::read(int fd, std::span<std::byte> destination, size_t offset, CallbackWithPointer<Callable>* callable) {
+    if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
+        io_uring_prep_read(sqe, fd, destination.data(), destination.size(), offset);
+        assert(!(reinterpret_cast<uintptr_t>(callable) & 0b1));
+        callable = reinterpret_cast<decltype(callable)>(reinterpret_cast<uintptr_t>(callable) | 0b1);
+        io_uring_sqe_set_data(sqe, callable);
+    }
+}
+
+template <typename Callable>
+void IoUring::read_fixed(int fd, std::span<std::byte> destination, int buffer_index, size_t offset,
+                         CallbackWithPointer<Callable>* callable) {
+    if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
+        io_uring_prep_read_fixed(sqe, fd, destination.data(), destination.size(), offset, buffer_index);
+        assert(!(reinterpret_cast<uintptr_t>(callable) & 0b1));
+        callable = reinterpret_cast<decltype(callable)>(reinterpret_cast<uintptr_t>(callable) | 0b1);
+        io_uring_sqe_set_data(sqe, callable);
     }
 }
 

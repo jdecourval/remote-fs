@@ -49,7 +49,7 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
 
     parser.add_argument("-c", "--chunk-size")
         .help("Deliver data to the application in chunk this big.")
-        .default_value(65475 - 20)
+        .default_value(65475 - 20 - 64)
         .scan<'d', int>();
     parser.add_argument("--fragment-size")
         .help("Fragment chunks on the network to at most this big (bytes). Default to the PMTU.")
