@@ -77,10 +77,10 @@ Server::RegisteredBuffer Server::new_registered_buffer() {
     auto buffer = [&] {
         if (std::ssize(buffers_cache) > index) {
             if (auto&& buffer = buffers_cache[index]) {
-                LOG_TRACE_L1(logger, "Found in cache");
+                LOG_TRACE_L1(logger, "Found in cache at index {}", index);
                 return buffer.non_owning_copy();
             } else {
-                LOG_TRACE_L1(logger, "Initializing new cache entry");
+                LOG_TRACE_L1(logger, "Initializing new cache entry at index {}", index);
                 return (buffers_cache[index] = RegisteredBuffer(index)).non_owning_copy();
             }
         } else {
@@ -117,7 +117,7 @@ void Server::read_callback(int syscall_ret, Socket&& client_socket, RegisteredBu
     auto client_socket_int = static_cast<int>(client_socket);
 
     if (syscall_ret < 0) [[unlikely]] {
-        if (syscall_ret == -ECONNRESET) {
+        if (syscall_ret == -ECONNRESET || syscall_ret == -EPIPE) {
             LOG_INFO(logger, "Connection reset by peer. Closing socket.");
             return;
         }
@@ -136,7 +136,7 @@ void Server::read_callback(int syscall_ret, Socket&& client_socket, RegisteredBu
         return;
     }
 
-    LOG_TRACE_L1(logger, "Read {} bytes of {}", syscall_ret, static_cast<int>(result[0]));
+    LOG_TRACE_L2(logger, "Read {} bytes of {}", syscall_ret, static_cast<int>(result[0]));
     switch (result[0]) {
         case messages::requests::Open().tag: {
             syscalls.open(*reinterpret_cast<messages::requests::Open*>(result.data()), client_socket);
@@ -227,16 +227,18 @@ void Server::start(int pipeline, int min_batch_size, std::chrono::nanoseconds wa
 template <typename Callable>
 void Server::write(int client_socket, RegisteredBuffer&& buffer, std::span<std::byte> source, Callable&& callback) {
     auto buffer_index = buffer.get_index();
+    auto buffer_total = buffer.view();
 
     // Must capture buffer until the call is completed
-    auto callback_with_buffer = [buffer = std::move(buffer), callback = std::forward<Callable>(callback)](int ret) {
-        return callback(ret);
-    };
+    auto callback_ptr = new (buffer_total.data()) IoUring::CallbackWithPointer{
+        [buffer = std::move(buffer), callback = std::forward<Callable>(callback)](int ret) { return callback(ret); }};
+    // The most horrible of hack. Assume reading uses header at least as big as writes.
+    assert((reinterpret_cast<std::byte*>(callback_ptr) + sizeof(*callback_ptr)) < source.data());
 
     if (buffer_index > 0) {
-        io_uring.write_fixed(client_socket, source, buffer_index, std::move(callback_with_buffer));
+        io_uring.write_fixed(client_socket, source, buffer_index, callback_ptr);
     } else {
-        io_uring.write(client_socket, source, std::move(callback_with_buffer));
+        io_uring.write(client_socket, source, callback_ptr);
     }
 }
 

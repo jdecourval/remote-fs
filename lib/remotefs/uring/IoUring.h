@@ -82,6 +82,13 @@ class IoUring {
     template <typename Callable>
     void write_fixed(int fd, std::span<const std::byte> source, int buffer_index, Callable&& callable);
 
+    template <typename Callable>
+    void write(int fd, std::span<const std::byte> source, CallbackWithPointer<Callable>* callable);
+
+    template <typename Callable>
+    void write_fixed(int fd, std::span<const std::byte> source, int buffer_index,
+                     CallbackWithPointer<Callable>* callable);
+
     template <typename Callable, size_t size>
     void write_vector(int fd, std::span<const iovec, size> sources, Callable&& callable);
 
@@ -182,6 +189,27 @@ void IoUring::write_fixed(int fd, std::span<const std::byte> source, int buffer_
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
         io_uring_prep_write_fixed(sqe, fd, source.data(), source.size(), 0, buffer_index);
         io_uring_sqe_set_data(sqe, callback);
+    }
+}
+
+template <typename Callable>
+void IoUring::write(int fd, std::span<const std::byte> source, CallbackWithPointer<Callable>* callable) {
+    if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
+        io_uring_prep_write(sqe, fd, source.data(), source.size(), 0);
+        assert(!(reinterpret_cast<uintptr_t>(callable) & 0b1));
+        callable = reinterpret_cast<decltype(callable)>(reinterpret_cast<uintptr_t>(callable) | 0b1);
+        io_uring_sqe_set_data(sqe, callable);
+    }
+}
+
+template <typename Callable>
+void IoUring::write_fixed(int fd, std::span<const std::byte> source, int buffer_index,
+                          CallbackWithPointer<Callable>* callable) {
+    if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
+        io_uring_prep_write_fixed(sqe, fd, source.data(), source.size(), 0, buffer_index);
+        assert(!(reinterpret_cast<uintptr_t>(callable) & 0b1));
+        callable = reinterpret_cast<decltype(callable)>(reinterpret_cast<uintptr_t>(callable) | 0b1);
+        io_uring_sqe_set_data(sqe, callable);
     }
 }
 
