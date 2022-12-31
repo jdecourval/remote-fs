@@ -44,7 +44,8 @@ void remotefs::IoUring::queue_wait(int min_batch_size, std::chrono::nanoseconds 
         ++completed;
         auto callback = reinterpret_cast<CallbackErased*>(io_uring_cqe_get_data(cqe));
         auto skip_delete = reinterpret_cast<uintptr_t>(callback) & 0b1;
-        (*reinterpret_cast<uintptr_t*>(&callback)) &= (std::numeric_limits<uintptr_t>::max() << 1);  //
+        callback = reinterpret_cast<CallbackErased*>(reinterpret_cast<uintptr_t>(callback) &
+                                                     (std::numeric_limits<uintptr_t>::max() << 1));
 
         if (callback != nullptr) {
             (*callback)(cqe->res);
@@ -76,4 +77,9 @@ void remotefs::IoUring::assign_buffer(int idx, std::span<std::byte> buffer) {
     if (auto ret = io_uring_register_buffers_update_tag(&ring, idx, &buffer_descriptor, nullptr, 1); ret < 0) {
         throw std::system_error(-ret, std::generic_category(), "Failed to update a registered buffer");
     }
+}
+
+void remotefs::IoUring::handle_get_sqe_error() {
+    // Metric
+    io_uring_submit(&ring);
 }

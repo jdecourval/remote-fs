@@ -36,15 +36,21 @@ class Server {
         RegisteredBuffer(const RegisteredBuffer&) = delete;
 
         RegisteredBuffer(RegisteredBuffer&& source) noexcept {
-            std::swap(buffer, source.buffer);
-            std::swap(index, source.index);
+            assert(this != &source);
+            assert(source);
+            index = source.index;
+            buffer = std::move(source.buffer);
+            source.index = -1;
+            source.buffer = nullptr;
         }
 
-        RegisteredBuffer& operator=(RegisteredBuffer&& source) {
-            index = -1;
-            buffer = nullptr;
-            std::swap(buffer, source.buffer);
-            std::swap(index, source.index);
+        RegisteredBuffer& operator=(RegisteredBuffer&& source) noexcept {
+            assert(this != &source);
+            assert(source);
+            index = source.index;
+            source.index = -1;
+            buffer = std::move(source.buffer);
+            source.buffer = nullptr;
             return *this;
         }
 
@@ -72,7 +78,7 @@ class Server {
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;
     void start(int pipeline, int min_batch_size, std::chrono::nanoseconds wait_timeout, bool register_ring);
-    void read_callback(int syscall_ret, Socket&& client_socket, RegisteredBuffer&& buffer, std::span<std::byte> result);
+    void read_callback(int syscall_ret, Socket&& client_socket, RegisteredBuffer buffer, std::span<std::byte> result);
     void accept_callback(int client_socket, int pipeline);
 
     template <typename Callable>
@@ -89,8 +95,7 @@ class Server {
     MetricRegistry<settings::DISABLE_METRICS> metric_registry;
     IoUring io_uring;
     Syscalls syscalls;
-    volatile int read_counter = 0;
-    std::vector<RegisteredBuffer> buffers_cache;  // Enable only on flag
+    std::vector<RegisteredBuffer> buffers_cache;
     bool _metrics_on_stop;
 };
 

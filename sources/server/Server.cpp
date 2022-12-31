@@ -9,7 +9,6 @@
 #include "remotefs/tools/NarrowCast.h"
 
 namespace {
-thread_local remotefs::IoUring* io_uring_static_thread_ptr = nullptr;
 thread_local unsigned long long active_registered_buffers = 0;  // bitmap of used buffers.
 
 }  // namespace
@@ -76,12 +75,14 @@ Server::RegisteredBuffer Server::new_registered_buffer() {
 
     auto buffer = [&] {
         if (std::ssize(buffers_cache) > index) {
-            if (auto&& buffer = buffers_cache[index]) {
+            if (auto& buffer = buffers_cache[index]) {
                 LOG_TRACE_L1(logger, "Found in cache at index {}", index);
                 return buffer.non_owning_copy();
             } else {
                 LOG_TRACE_L1(logger, "Initializing new cache entry at index {}", index);
-                return (buffers_cache[index] = RegisteredBuffer(index)).non_owning_copy();
+                auto new_buffer = (buffers_cache[index] = RegisteredBuffer(index)).non_owning_copy();
+                io_uring.assign_buffer(narrow_cast<int>(index), new_buffer.view());
+                return std::move(new_buffer);
             }
         } else {
             LOG_TRACE_L1(logger, "Creating untracked buffer");
@@ -89,7 +90,6 @@ Server::RegisteredBuffer Server::new_registered_buffer() {
         }
     }();
 
-    io_uring.assign_buffer(narrow_cast<int>(index), buffer.view());
     return buffer;
 }
 
@@ -109,7 +109,7 @@ void Server::accept_callback(int client_socket, int pipeline) {
     }
 }
 
-void Server::read_callback(int syscall_ret, Socket&& client_socket, RegisteredBuffer&& buffer,
+void Server::read_callback(int syscall_ret, Socket&& client_socket, RegisteredBuffer buffer,
                            std::span<std::byte> result) {
     // TODO: Perhaps RegisteredBuffer should contain an offset of where its data is located? That would avoid passing a
     // span around.
@@ -188,8 +188,6 @@ void Server::read_callback(int syscall_ret, Socket&& client_socket, RegisteredBu
 
 void Server::start(int pipeline, int min_batch_size, std::chrono::nanoseconds wait_timeout, bool register_ring) {
     std::signal(SIGPIPE, SIG_IGN);
-    assert(io_uring_static_thread_ptr == nullptr);
-    io_uring_static_thread_ptr = &io_uring;
 
     if (register_ring) {
         io_uring.register_ring();
@@ -208,16 +206,16 @@ void Server::start(int pipeline, int min_batch_size, std::chrono::nanoseconds wa
     io_uring.accept(socket, [this, pipeline](int32_t syscall_ret) { accept_callback(syscall_ret, pipeline); });
 
     while (!stop_requested) [[likely]] {
-            {
-                auto tracker = wait_time.track_scope();
-                io_uring.queue_wait(min_batch_size, wait_timeout);
-            }
-
-            if (log_requested) [[unlikely]] {
-                log_requested = false;
-                std::cerr << metric_registry << std::flush;
-            }
+        {
+            auto tracker = wait_time.track_scope();
+            io_uring.queue_wait(min_batch_size, wait_timeout);
         }
+
+        if (log_requested) [[unlikely]] {
+            log_requested = false;
+            std::cerr << metric_registry << std::flush;
+        }
+    }
 
     if (_metrics_on_stop) {
         std::cerr << metric_registry << std::flush;
@@ -226,16 +224,20 @@ void Server::start(int pipeline, int min_batch_size, std::chrono::nanoseconds wa
 
 template <typename Callable>
 void Server::write(int client_socket, RegisteredBuffer&& buffer, std::span<std::byte> source, Callable&& callback) {
+    static_assert(std::is_invocable_v<Callable, int>);
     auto buffer_index = buffer.get_index();
     auto buffer_total = buffer.view();
 
     // Must capture buffer until the call is completed
     auto callback_ptr = new (buffer_total.data()) IoUring::CallbackWithPointer{
-        [buffer = std::move(buffer), callback = std::forward<Callable>(callback)](int ret) { return callback(ret); }};
+        [buffer = std::move(buffer), callback = std::forward<Callable>(callback)](int ret) mutable {
+            auto free_buffer_after_use = std::move(buffer);
+            return callback(ret);
+        }};
     // The most horrible of hack. Assume reading uses header at least as big as writes.
     assert((reinterpret_cast<std::byte*>(callback_ptr) + sizeof(*callback_ptr)) < source.data());
 
-    if (buffer_index > 0) {
+    if (buffer_index >= 0) {
         io_uring.write_fixed(client_socket, source, buffer_index, callback_ptr);
     } else {
         io_uring.write(client_socket, source, callback_ptr);
@@ -274,6 +276,7 @@ void Server::read(int client_socket, int offset, RegisteredBuffer&& buffer, Call
 
 Server::RegisteredBuffer::~RegisteredBuffer() {
     if (is_registered()) {
+        LOG_DEBUG(quill::get_logger(), "Unregistering buffer {}", index);
         active_registered_buffers ^= 0b1ull << index;
     }
 }

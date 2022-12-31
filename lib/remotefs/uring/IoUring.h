@@ -39,7 +39,7 @@ class IoUring {
         }
 
         explicit CallbackWithPointer(Callable&& c)
-            : callable{std::move(c)} {}
+            : callable{std::forward<Callable>(c)} {}
 
         Callable callable;
         // TODO: Increasing the alignment increase the class's size even if buffer is unused.
