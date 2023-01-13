@@ -34,6 +34,11 @@ MetricRegistry<false>::Histogram<>& MetricRegistry<false>::create_histogram(std:
 }
 
 template <>
+MetricRegistry<false>::Histogram<double>& MetricRegistry<false>::create_histogram_double(std::string&& name) {
+    return std::get<Histogram<double>>(metrics.emplace_front(std::in_place_type<Histogram<double>>, std::move(name)));
+}
+
+template <>
 MetricRegistry<false>::Timer& MetricRegistry<false>::create_timer(std::string&& name) {
     return std::get<Timer>(metrics.emplace_front(std::in_place_type<Timer>, std::move(name)));
 }
@@ -71,11 +76,22 @@ std::ostream& MetricRegistry<false>::Histogram<std::chrono::high_resolution_cloc
 
 template <>
 template <>
+std::ostream& MetricRegistry<false>::Histogram<double>::print(std::ostream& output) const {
+    output << _name << ":samples:" << stats.samples << "\n";
+    output << _name << ":mean:" << stats.mean << "\n";
+    output << _name << ":min:" << stats.min << "\n";
+    output << _name << ":max:" << stats.max << "\n";
+    output << _name << ":total:" << stats.mean * stats.samples << "\n";
+    return output;
+}
+
+template <>
+template <>
 MetricRegistry<false>::Histogram<>& MetricRegistry<false>::Histogram<>::operator+=(const Diff& duration) {
     stats.samples++;
     stats.mean += (duration - stats.mean) / stats.samples;
     stats.min = std::min(stats.min, duration);
-    stats.max = std::max(stats.min, duration);
+    stats.max = std::max(stats.max, duration);
     stats.total_mod = duration % stats.mean;
     return *this;
 }
@@ -87,8 +103,18 @@ MetricRegistry<false>::Histogram<std::chrono::high_resolution_clock::time_point>
     stats.samples++;
     stats.mean += (duration - stats.mean) / stats.samples;
     stats.min = std::min(stats.min, duration);
-    stats.max = std::max(stats.min, duration);
+    stats.max = std::max(stats.max, duration);
     stats.total_mod = duration % stats.mean;
+    return *this;
+}
+
+template <>
+template <>
+MetricRegistry<false>::Histogram<double>& MetricRegistry<false>::Histogram<double>::operator+=(const Diff& duration) {
+    stats.samples++;
+    stats.mean += (duration - stats.mean) / stats.samples;
+    stats.min = std::min(stats.min, duration);
+    stats.max = std::max(stats.max, duration);
     return *this;
 }
 

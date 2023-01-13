@@ -104,6 +104,7 @@ class MetricRegistry {
 
     Counter& create_counter(std::string&& name);
     Histogram<>& create_histogram(std::string&& name);
+    Histogram<double>& create_histogram_double(std::string&& name);
     Timer& create_timer(std::string&& name);
 
     template <bool d>
@@ -111,7 +112,7 @@ class MetricRegistry {
 
    private:
     // forward_list doesn't invalidate references upon inserting.
-    std::forward_list<std::variant<Counter, Histogram<>, Timer>> metrics;
+    std::forward_list<std::variant<Counter, Histogram<>, Histogram<double>, Timer>> metrics;
 };
 
 }  // namespace remotefs
