@@ -1,9 +1,14 @@
 #include "remotefs/metrics/Metrics.h"
 
 namespace remotefs {
-
 template <>
 MetricRegistry<true>::Metric::Metric(std::string&&) {}
+
+namespace {
+auto default_histogram = MetricRegistry<true>::Histogram<>("");
+auto default_timer = MetricRegistry<true>::Timer("");
+auto default_counter = MetricRegistry<true>::Counter("");
+}  // namespace
 
 std::ostream& operator<<(std::ostream& output, const MetricRegistry<true>::Metric&) {
     return output;
@@ -19,19 +24,16 @@ void MetricRegistry<true>::Counter::increment(long) {}
 
 template <>
 MetricRegistry<true>::Counter& MetricRegistry<true>::create_counter(std::string&&) {
-    static auto default_counter = Counter("");
     return default_counter;
 }
 
 template <>
 MetricRegistry<true>::Histogram<>& MetricRegistry<true>::create_histogram(std::string&&) {
-    static auto default_histogram = Histogram<>("");
     return default_histogram;
 }
 
 template <>
 MetricRegistry<true>::Timer& MetricRegistry<true>::create_timer(std::string&&) {
-    static auto default_timer = Timer("");
     return default_timer;
 }
 
@@ -56,7 +58,6 @@ std::ostream& MetricRegistry<true>::Histogram<std::chrono::high_resolution_clock
 template <>
 template <>
 MetricRegistry<true>::Histogram<>& MetricRegistry<true>::Histogram<>::operator+=(const Diff&) {
-    static auto default_histogram = Histogram<>("");
     return default_histogram;
 }
 
@@ -76,8 +77,10 @@ MetricRegistry<true>::Timer::ScopeTracker::~ScopeTracker() = default;
 
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "cppcoreguidelines-pro-type-member-init"
+
 template <>
 MetricRegistry<true>::Timer::ScopeTracker::ScopeTracker(MetricRegistry::Timer*) {}
+
 #pragma clang diagnostic pop
 
 template <>
