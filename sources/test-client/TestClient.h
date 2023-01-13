@@ -32,6 +32,7 @@ class TestClient {
             remotefs::MetricRegistry<>::Timer& latency;
             std::chrono::high_resolution_clock::time_point start_time = std::chrono::high_resolution_clock::now();
             bool measure_latency = false;
+            std::pair<int, int> buffers_indexes = {-1, -1};  // -1 if unassigned
         };
 
         explicit ClientThread(remotefs::IoUring& ring);
@@ -52,14 +53,15 @@ class TestClient {
                int sockets_n, int pipeline, int chunk_size, bool share_ring, int ring_depth);
     ~TestClient();
     [[nodiscard]] bool done() const;
-    void start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring);
-    void register_buffers();
+    void start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring,
+               int register_buffers);
     void register_sockets();
 
    private:
     std::vector<remotefs::Socket> sockets;
     std::vector<remotefs::IoUring> urings;
     std::vector<ClientThread> threads;
+    bool shared_ring;
 };
 
 #endif  // REMOTE_FS_TESTCLIENT_H

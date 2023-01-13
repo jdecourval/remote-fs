@@ -82,10 +82,10 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
         .help("io uring queue depth.")
         .scan<'d', int>()
         .default_value(remotefs::IoUring::queue_depth_default);
-    parser.add_argument("-B", "--register-buffers")
-        .help("Register buffers in io uring.")
-        .default_value(false)
-        .implicit_value(true);
+    program.add_argument("-B", "--register-buffers")
+        .help("This amount of sparse buffers will be registered in io uring per thread.")
+        .scan<'d', int>()
+        .default_value(64);
     parser.add_argument("-V", "--register-sockets")
         .help("Register sockets in io uring.")
         .default_value(false)
@@ -178,18 +178,14 @@ int main(int argc, char* argv[]) {
         program.get<int>("--threads"),    program.get<int>("--sockets"),     program.get<int>("--pipeline"),
         program.get<int>("--chunk-size"), program.get<bool>("--share-ring"), program.get<int>("--ring-depth")};
 
-    if (program.get<bool>("--register-buffers")) {
-        client.register_buffers();
-        throw std::logic_error("--register-buffers is unimplemented.");
-    }
-
     if (program.get<bool>("--register-sockets")) {
         client.register_sockets();
         throw std::logic_error("--register-sockets is unimplemented.");
     }
 
     client.start(program.get<int>("--min-batch"), std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
-                 program.get<long>("--max-size"), program.get<bool>("--register-ring"));
+                 program.get<long>("--max-size"), program.get<bool>("--register-ring"),
+                 program.get<int>("--register-buffers"));
 
     std::signal(SIGTERM, signal_handler);
     std::signal(SIGINT, signal_handler);

@@ -8,7 +8,8 @@
 using remotefs::messages::both::Ping;
 
 TestClient::TestClient(const std::string& address, int port, remotefs::Socket::Options socket_options, int threads_n,
-                       int sockets_n, int pipeline, int chunk_size, bool share_ring, int ring_depth) {
+                       int sockets_n, int pipeline, int chunk_size, bool share_ring, int ring_depth)
+    : shared_ring{share_ring} {
     assert(sockets_n >= 0);
     assert(threads_n > 0);
 
@@ -45,13 +46,21 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
     auto read_buffer_view = buffers.first->view();
     auto write_buffer_view = buffers.second->view();
 
-    uring.write(socket, write_buffer_view, [](int32_t syscall_ret) mutable {
-        if (syscall_ret < 0) {
-            throw std::system_error(-syscall_ret, std::system_category(), "Failed to write to socket");
-        }
-    });
+    if (buffers_indexes.second >= 0) {
+        uring.write_fixed(socket, write_buffer_view, buffers_indexes.second, [](int32_t syscall_ret) mutable {
+            if (syscall_ret < 0) {
+                throw std::system_error(-syscall_ret, std::system_category(), "Failed to write to socket");
+            }
+        });
+    } else {
+        uring.write(socket, write_buffer_view, [](int32_t syscall_ret) mutable {
+            if (syscall_ret < 0) {
+                throw std::system_error(-syscall_ret, std::system_category(), "Failed to write to socket");
+            }
+        });
+    }
 
-    uring.read(socket, read_buffer_view, 0, [this, max_size_thread](int32_t syscall_ret) mutable {
+    auto read_callback = [this, max_size_thread](int32_t syscall_ret) mutable {
         if (measure_latency) {
             latency += std::chrono::high_resolution_clock::now() - start_time;
         }
@@ -64,22 +73,40 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
             read_write(max_size_thread);
         } else {
             stages_running--;
-        }
-    });
+        };
+    };
+
+    if (buffers_indexes.first >= 0) {
+        uring.read_fixed(socket, read_buffer_view, buffers_indexes.first, 0, std::move(read_callback));
+    } else {
+        uring.read(socket, read_buffer_view, 0, std::move(read_callback));
+    }
 }
 
-void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring) {
+void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring,
+                       int register_buffers) {
+    auto thread_id = 0;
     for (auto& thread : threads) {
         *thread.stages_running = static_cast<int>(std::ssize(thread.stages));
-        thread.thread =
-            std::jthread{[&thread, min_batch_size, wait_timeout, register_ring,
-                          max_size_thread = max_size / static_cast<int>(threads.size())](std::stop_token stop_token) {
+        auto index_start = shared_ring ? thread_id++ * thread.stages.size() : 0;
+        thread.thread = std::jthread{
+            [&thread, min_batch_size, wait_timeout, register_ring, register_buffers, index_start,
+             max_size_thread = max_size / static_cast<int>(threads.size())](std::stop_token stop_token) mutable {
                 thread.start = std::chrono::high_resolution_clock::now();
                 if (register_ring) {
                     thread.uring.register_ring();
                 }
 
+                if (register_buffers) {
+                    thread.uring.register_sparse_buffers(register_buffers);
+                }
+
                 for (auto& stage : thread.stages) {
+                    if (register_buffers) {
+                        stage.buffers_indexes = {index_start++, index_start++};
+                        thread.uring.assign_buffer(stage.buffers_indexes.first, stage.buffers.first->view());
+                        thread.uring.assign_buffer(stage.buffers_indexes.second, stage.buffers.second->view());
+                    }
                     stage.read_write(max_size_thread);
                 }
 
@@ -99,8 +126,6 @@ void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout
             }};
     }
 }
-
-void TestClient::register_buffers() {}
 
 void TestClient::register_sockets() {}
 
@@ -122,5 +147,6 @@ TestClient::~TestClient() {
         thread.thread.join();
     }
 }
+
 TestClient::ClientThread::ClientThread(remotefs::IoUring& ring)
     : uring{ring} {}
