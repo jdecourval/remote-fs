@@ -5,3 +5,4 @@ ColumnLimit: 120
 AllowShortFunctionsOnASingleLine: Empty
 PackConstructorInitializers: Never
 SeparateDefinitionBlocks: Always
+AlignAfterOpenBracket: BlockIndent

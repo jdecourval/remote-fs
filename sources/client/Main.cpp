@@ -16,14 +16,15 @@ int main(int argc, char* argv[]) {
     auto args = std::span(argv, argc);
 
     auto threads = std::vector<std::jthread>{};
-    for (auto i = 0; i < 4; i++) {
+    for (auto i = 0; i < 1; i++) {
         threads.emplace_back(
             [](int argc, char* argv[], auto args) {
                 LOG_DEBUG(quill::get_logger(), "Ready to start");
                 auto client = remotefs::Client(argc - 1, argv);
                 client.start(args.back());
             },
-            argc, argv, args);
+            argc, argv, args
+        );
     }
 
     LOG_INFO(logger, "Waiting for workers");

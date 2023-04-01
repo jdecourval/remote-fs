@@ -3,18 +3,20 @@ include(FindPkgConfig)
 
 add_library(remotefs
     remotefs/tools/FuseOp.h
-    remotefs/metrics/Metrics.h
-    remotefs/metrics/impl/MetricsEnabled.cpp
-    remotefs/metrics/impl/MetricsDisabled.cpp
-    remotefs/inodecache/InodeCache.h
-    remotefs/inodecache/impl/InodeCache.cpp
-    remotefs/uring/IoUring.h
-    remotefs/messages/Messages.h
-    remotefs/uring/IoUring.cpp
-    remotefs/sockets/Socket.cpp
-    remotefs/sockets/Socket.h
-    remotefs/tools/NarrowCast.h
-    )
+        remotefs/metrics/Metrics.h
+        remotefs/metrics/impl/MetricsEnabled.cpp
+        remotefs/metrics/impl/MetricsDisabled.cpp
+        remotefs/inodecache/InodeCache.h
+        remotefs/inodecache/impl/InodeCache.cpp
+        remotefs/uring/IoUring.h
+        remotefs/messages/Messages.h
+        remotefs/uring/IoUring.cpp
+        remotefs/sockets/Socket.cpp
+        remotefs/sockets/Socket.h
+        remotefs/tools/Bytes.h
+        remotefs/tools/Casts.h
+        remotefs/uring/RegisteredBufferCache.h
+        )
 
 set_target_properties(remotefs PROPERTIES LINKER_LANGUAGE CXX)
 

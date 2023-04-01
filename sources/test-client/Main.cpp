@@ -49,7 +49,7 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
 
     parser.add_argument("-c", "--chunk-size")
         .help("Deliver data to the application in chunk this big.")
-        .default_value(65475 - 20 - 64)
+        .default_value(65475 - 20)
         .scan<'d', int>();
     parser.add_argument("--fragment-size")
         .help("Fragment chunks on the network to at most this big (bytes). Default to the PMTU.")
@@ -119,7 +119,7 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
     parser.add_argument("--buffers-alignment")
         .help("Override default buffers alignment")
         .scan<'d', std::size_t>()
-        .default_value(alignof(remotefs::messages::both::Ping));
+        .default_value(remotefs::IoUring::buffers_alignment);
 
     parser.add_argument("address").help("Address to connect to.");
     parser.add_argument("port").help("Port to connect to.").scan<'d', int>().default_value(6512);
@@ -174,9 +174,15 @@ int main(int argc, char* argv[]) {
                                   program.get<std::uint16_t>("--streams"), program.get<bool>("--ordered-delivery"),
                                   !program.get<bool>("--nagle"),           program.get<bool>("--disable-fragment")};
     auto client = TestClient{
-        program.get("address"),           program.get<int>("port"),          socket_options,
-        program.get<int>("--threads"),    program.get<int>("--sockets"),     program.get<int>("--pipeline"),
-        program.get<int>("--chunk-size"), program.get<bool>("--share-ring"), program.get<int>("--ring-depth")};
+        program.get("address"),
+        program.get<int>("port"),
+        socket_options,
+        program.get<int>("--threads"),
+        program.get<int>("--sockets"),
+        program.get<int>("--pipeline"),
+        remotefs::narrow_cast<size_t>(program.get<int>("--chunk-size")),
+        program.get<bool>("--share-ring"),
+        program.get<int>("--ring-depth")};
 
     if (program.get<bool>("--register-sockets")) {
         client.register_sockets();

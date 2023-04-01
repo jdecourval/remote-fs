@@ -8,6 +8,7 @@
 
 #include "Config.h"
 #include "remotefs/messages/Messages.h"
+#include "remotefs/sockets/Socket.h"
 #include "remotefs/tools/FuseOp.h"
 #include "remotefs/uring/IoUring.h"
 
@@ -17,6 +18,9 @@ class Logger;
 
 namespace remotefs {
 class Client {
+    static const auto PAGE_SIZE = 4096;
+    static const auto FUSE_REQUEST_SIZE = FUSE_MAX_MAX_PAGES * PAGE_SIZE + FUSE_BUFFER_HEADER_SIZE;
+
    public:
     explicit Client(int argc, char* argv[]);
     ~Client();
@@ -24,14 +28,25 @@ class Client {
 
    private:
     void common_init(int argc, char* argv[]);
-    void read_callback(int syscall_ret, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer);
-    void fuse_callback(int syscall_ret, std::unique_ptr<char[]>&& buffer, size_t bufsize);
-    void fuse_reply_data(std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>&& buffer);
+
+    template <auto BufferSize>
+    void read_callback(
+        int syscall_ret, IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, BufferSize>> old_callback
+    );
+
+    void fuse_callback(
+        int syscall_ret, IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, FUSE_REQUEST_SIZE>> buffer
+    );
+
+    template <auto BufferSize>
+    void fuse_reply_data(IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, BufferSize>> buffer);
     quill::Logger* logger;
-    int socket = 0;
+    remotefs::Socket socket;
     IoUring io_uring;
     struct fuse_session* fuse_session;
     int fuse_fd;
+    int fuse_uring_idx;
+    int socket_uring_idx;
     fuse_chan fuse_channel;
 
     static thread_local Client* self;

@@ -7,8 +7,10 @@
 
 using remotefs::messages::both::Ping;
 
-TestClient::TestClient(const std::string& address, int port, remotefs::Socket::Options socket_options, int threads_n,
-                       int sockets_n, int pipeline, int chunk_size, bool share_ring, int ring_depth)
+TestClient::TestClient(
+    const std::string& address, int port, remotefs::Socket::Options socket_options, int threads_n, int sockets_n,
+    int pipeline, size_t chunk_size, bool share_ring, int ring_depth
+)
     : shared_ring{share_ring} {
     assert(sockets_n >= 0);
     assert(threads_n > 0);
@@ -34,33 +36,42 @@ TestClient::TestClient(const std::string& address, int port, remotefs::Socket::O
 
         for (auto j = 0; j < std::max(1, sockets_n) * pipeline; j++) {
             auto& socket = sockets.at((j * (std::max(1, sockets_n) * pipeline) + i) % sockets.size());
-            thread.stages.push_back({socket, ring,
-                                     std::pair{std::unique_ptr<Ping>{new (chunk_size) Ping(chunk_size)},
-                                               std::unique_ptr<Ping>{new (chunk_size) Ping(chunk_size)}},
-                                     *thread.stages_running, bandwidth_metric, latency_metric});
+            thread.stages.push_back({socket, ring, *thread.stages_running, bandwidth_metric, latency_metric, chunk_size}
+            );
         }
     }
+
+    //    std::signal(SIGUSR1, signal_usr1_handler);
+    //    std::signal(SIGTERM, signal_term_handler);
+    std::signal(SIGPIPE, SIG_IGN);
 }
 
 void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) const {
-    auto read_buffer_view = buffers.first->view();
-    auto write_buffer_view = buffers.second->view();
+    //    LOG_INFO(quill::get_logger(), "Scheduling");
 
-    if (buffers_indexes.second >= 0) {
-        uring.write_fixed(socket, write_buffer_view, buffers_indexes.second, [](int32_t syscall_ret) mutable {
-            if (syscall_ret < 0) {
-                throw std::system_error(-syscall_ret, std::system_category(), "Failed to write to socket");
-            }
-        });
-    } else {
-        uring.write(socket, write_buffer_view, [](int32_t syscall_ret) mutable {
-            if (syscall_ret < 0) {
-                throw std::system_error(-syscall_ret, std::system_category(), "Failed to write to socket");
-            }
-        });
+    {
+        auto write_callable = [](int) {};
+
+        // TODO: This doesn't exactly work because the size of Ping affects callable's placement in Callback.
+        //  This could be fixed by moving callable before storage in Callback, but this hsa other consequences
+        //  Alternatively, this could be solved an iterative constexpr function.
+        constexpr auto max_write_payload_size =
+            remotefs::IoUring::buffers_size -
+            sizeof(remotefs::IoUring::Callback<
+                   decltype(write_callable), remotefs::messages::both::Ping<1, remotefs::IoUring::buffers_alignment>>) -
+            1;
+        auto write_callback = uring.get_callback<remotefs::messages::both::Ping<max_write_payload_size>>(
+            std::move(write_callable), chunk_size - 100
+        );
+
+        static_assert(sizeof(*write_callback) <= remotefs::IoUring::buffers_size);
+        //    static_assert(sizeof(*callback) == remotefs::IoUring::buffers_size);
+
+        auto view = write_callback->storage.view();
+        uring.write_fixed(socket, view, std::move(write_callback));
     }
 
-    auto read_callback = [this, max_size_thread](int32_t syscall_ret) mutable {
+    auto read_callable = [this, max_size_thread](int32_t syscall_ret) mutable {
         if (measure_latency) {
             latency += std::chrono::high_resolution_clock::now() - start_time;
         }
@@ -76,11 +87,21 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
         };
     };
 
-    if (buffers_indexes.first >= 0) {
-        uring.read_fixed(socket, read_buffer_view, buffers_indexes.first, 0, std::move(read_callback));
-    } else {
-        uring.read(socket, read_buffer_view, 0, std::move(read_callback));
-    }
+    constexpr auto max_read_payload_size =
+        remotefs::IoUring::buffers_size -
+        sizeof(remotefs::IoUring::Callback<
+               decltype(read_callable), remotefs::messages::both::Ping<1, remotefs::IoUring::buffers_alignment>>) -
+        1;
+
+    auto read_callback = uring.get_callback<remotefs::messages::both::Ping<max_read_payload_size>>(
+        std::move(read_callable), chunk_size - 100
+    );
+    static_assert(sizeof(*read_callback) <= remotefs::IoUring::buffers_size);
+
+    auto view = read_callback->storage.view();
+    assert(view.data() > reinterpret_cast<std::byte*>(read_callback.get()));
+    assert(&view.back() < reinterpret_cast<std::byte*>(read_callback.get()) + sizeof(*read_callback.get()));
+    uring.read_fixed(socket, view, std::move(read_callback));
 }
 
 void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring,
@@ -88,29 +109,20 @@ void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout
     auto thread_id = 0;
     for (auto& thread : threads) {
         *thread.stages_running = static_cast<int>(std::ssize(thread.stages));
-        auto index_start = shared_ring ? thread_id++ * thread.stages.size() : 0;
         thread.thread = std::jthread{
-            [&thread, min_batch_size, wait_timeout, register_ring, register_buffers, index_start,
+            [&thread, min_batch_size, wait_timeout, register_ring,
              max_size_thread = max_size / static_cast<int>(threads.size())](std::stop_token stop_token) mutable {
                 thread.start = std::chrono::high_resolution_clock::now();
                 if (register_ring) {
                     thread.uring.register_ring();
                 }
 
-                if (register_buffers) {
-                    thread.uring.register_sparse_buffers(register_buffers);
-                }
-
                 for (auto& stage : thread.stages) {
-                    if (register_buffers) {
-                        stage.buffers_indexes = {index_start++, index_start++};
-                        thread.uring.assign_buffer(stage.buffers_indexes.first, stage.buffers.first->view());
-                        thread.uring.assign_buffer(stage.buffers_indexes.second, stage.buffers.second->view());
-                    }
                     stage.read_write(max_size_thread);
                 }
 
                 while (!stop_token.stop_requested() && *thread.stages_running > 0) [[likely]] {
+                    //                    LOG_INFO(quill::get_logger(), "Loop");
                     thread.uring.queue_wait(min_batch_size, wait_timeout);
                 }
                 auto thread_time = std::chrono::duration_cast<std::chrono::duration<double>>(

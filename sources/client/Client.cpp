@@ -9,7 +9,7 @@
 
 #include "Config.h"
 #include "FuseCmdlineOptsWrapper.h"
-#include "remotefs/sockets/Socket.h"
+
 namespace remotefs {
 thread_local Client *Client::self;
 std::atomic_flag Client::common_init_done;
@@ -42,24 +42,23 @@ Client::Client(int argc, char *argv[])
     pthread_mutex_init(&fuse_channel.lock, nullptr);
 
     io_uring.register_ring();
+    io_uring.register_sparse_files(64);
+    //    io_uring.assign_file((fuse_uring_idx = 0), fuse_fd);
+
+    assert(sysconf(_SC_PAGESIZE) == PAGE_SIZE);
 }
 
-void Client::fuse_reply_data(std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>> &&buffer) {
+template <auto BufferSize>
+void Client::fuse_reply_data(
+    IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, BufferSize>> old_callback
+) {
     using msg_t = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>;
-    auto &msg = *reinterpret_cast<msg_t *>(buffer->data());
-    auto req = msg.req;
-    // TODO:size Cleanup this hack, it is still a strict aliasing violation.
-    static_assert(sizeof(fuse_out_header) + msg_t::MAX_PAYLOAD_SIZE <= sizeof(msg_t));
-    auto *headers = reinterpret_cast<fuse_out_header *>(msg.data.data() - sizeof(fuse_out_header));
-    assert(static_cast<void *>(headers) >= buffer.get());
-    auto size = static_cast<uint32_t>(sizeof(*headers) + msg.data_size);
-    auto headers_to_copy =
-        fuse_out_header{.len = size, .error = 0, .unique = reinterpret_cast<const uint64_t *>(msg.req)[1]};
-    std::memcpy(headers, &headers_to_copy, sizeof(headers_to_copy));
+    auto &msg = *reinterpret_cast<msg_t *>(old_callback->storage.data());
 
-    auto buffer_view = std::span{reinterpret_cast<char *>(headers), size};
-    io_uring.write(fuse_fd, buffer_view, [req, buffer = std::move(buffer)](int ret) {
-        auto &msg = *reinterpret_cast<msg_t *>(buffer->data());
+    LOG_DEBUG(logger, "Received FuseReplyBuf, req={}, size={}", reinterpret_cast<uint64_t>(msg.req), msg.data_size);
+
+    auto callback = io_uring.get_callback<std::array<std::byte, BufferSize - 20>>([this, req = msg.req](int ret) {
+        LOG_TRACE_L1(logger, "Fuse callback done: {}", ret);
         if (ret > 0) {
             // This calls fuse_free_req without any other effect.
             fuse_reply_none(req);
@@ -67,63 +66,86 @@ void Client::fuse_reply_data(std::unique_ptr<std::array<char, settings::MAX_MESS
             fuse_reply_err(req, -ret);
         };
     });
+
+    struct FuseResponse {
+        fuse_out_header headers;
+        char buffer[];
+    };
+
+    assert(sizeof(FuseResponse) + msg.data_size <= callback->storage.size());
+
+    auto *response = reinterpret_cast<FuseResponse *>(callback->storage.data());
+    response->headers = fuse_out_header{
+        .len = narrow_cast<decltype(fuse_out_header::len)>(sizeof(fuse_out_header) + msg.data_size),
+        .error = 0,
+        .unique = reinterpret_cast<const uint64_t *>(msg.req)[1]};
+    // TODO: Remove copy
+    std::memcpy(response->buffer, msg.data.data(), msg.data_size);
+    auto buffer_view = std::span{callback->storage.begin(), response->headers.len};
+    io_uring.write(fuse_fd, buffer_view, std::move(callback));
 }
 
-void Client::read_callback(int syscall_ret, std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>> &&buffer) {
-    auto buffer_view = std::span{buffer->data(), buffer->size()};
+template <auto BufferSize>
+void Client::read_callback(
+    int syscall_ret, IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, BufferSize>> old_callback
+) {
+    auto callable = [this](int32_t syscall_ret, auto callback) { read_callback(syscall_ret, std::move(callback)); };
 
     if (syscall_ret < 0) {
         LOG_ERROR(logger, "Read failed: {}", std::strerror(-syscall_ret));
-        io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-            read_callback(syscall_ret, std::move(buffer));
-        });
+        io_uring.read_fixed(socket, std::move(callable));
         return;
     }
 
     if (syscall_ret == 0) {
         LOG_INFO(logger, "Read NULL message");
-        io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-            read_callback(syscall_ret, std::move(buffer));
-        });
+        io_uring.read_fixed(socket, std::move(callable));
         return;
     }
 
-    switch (buffer->at(0)) {
-        case 1: {
-            auto *msg = reinterpret_cast<const messages::responses::FuseReplyEntry *>(buffer->data());
-            LOG_DEBUG(logger, "Received FuseReplyEntry, ino={}, req={}, fd={}", msg->attr.ino,
-                      reinterpret_cast<uint64_t>(msg->req), msg->req->ch->fd);
+    switch (old_callback->storage[0]) {
+        case std::byte{1}: {
+            auto *msg = reinterpret_cast<const messages::responses::FuseReplyEntry *>(old_callback->storage.data());
+            LOG_DEBUG(
+                logger, "Received FuseReplyEntry, ino={}, req={}, fd={}, size={}", msg->attr.ino,
+                reinterpret_cast<uint64_t>(msg->req), msg->req->ch->fd, msg->attr.attr.st_size
+            );
 
             if (auto ret = fuse_reply_entry(msg->req, &msg->attr); ret < 0) {
                 throw std::system_error(-ret, std::generic_category(), "fuse_reply_entry failure");
             }
             break;
         }
-        case 2: {
-            auto &msg = *reinterpret_cast<const messages::responses::FuseReplyAttr *>(buffer->data());
-            LOG_DEBUG(logger, "Received FuseReplyAttr, req={}, fd={}, fd={}", reinterpret_cast<uint64_t>(msg.req),
-                      fuse_fd, msg.req->ch->fd);
+        case std::byte{2}: {
+            auto &msg = *reinterpret_cast<const messages::responses::FuseReplyAttr *>(old_callback->storage.data());
+            LOG_DEBUG(
+                logger, "Received FuseReplyAttr, req={}, fd={}, fd={}", reinterpret_cast<uint64_t>(msg.req), fuse_fd,
+                msg.req->ch->fd
+            );
             if (auto ret = fuse_reply_attr(msg.req, &msg.attr, 1.0); ret < 0) {
                 throw std::system_error(-ret, std::generic_category(), "fuse_reply_attr failure");
             }
             break;
         }
-        case 3: {
-            auto &msg = *reinterpret_cast<const messages::responses::FuseReplyOpen *>(buffer->data());
+        case std::byte{3}: {
+            auto &msg = *reinterpret_cast<const messages::responses::FuseReplyOpen *>(old_callback->storage.data());
+
             LOG_DEBUG(logger, "Received FuseReplyOpen, req={}", reinterpret_cast<uint64_t>(msg.req));
             if (auto ret = fuse_reply_open(msg.req, &msg.file_info); ret < 0) {
                 throw std::system_error(-ret, std::generic_category(), "fuse_reply_open failure");
             }
             break;
         }
-        case 4: {
-            fuse_reply_data(std::move(buffer));
+        case std::byte{4}: {
+            fuse_reply_data(std::move(old_callback));
             break;
         }
-        case 5: {
-            auto &msg = *reinterpret_cast<const messages::responses::FuseReplyErr *>(buffer->data());
-            LOG_WARNING(logger, "Received error for req {}: {}", reinterpret_cast<uint64_t>(msg.req),
-                        std::strerror(msg.error_code));
+        case std::byte{5}: {
+            auto &msg = *reinterpret_cast<const messages::responses::FuseReplyErr *>(old_callback->storage.data());
+            LOG_WARNING(
+                logger, "Received error for req {}: {}", reinterpret_cast<uint64_t>(msg.req),
+                std::strerror(msg.error_code)
+            );
             if (auto ret = fuse_reply_err(msg.req, msg.error_code); ret < 0) {
                 throw std::system_error(-ret, std::generic_category(), "fuse_reply_err failure");
             }
@@ -132,54 +154,45 @@ void Client::read_callback(int syscall_ret, std::unique_ptr<std::array<char, set
         default:
             assert(false);
     }
-    if (!buffer) {
-        buffer.reset(new std::array<char, settings::MAX_MESSAGE_SIZE>());
-        buffer_view = std::span{buffer->data(), buffer->size()};
-    }
-    io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-        read_callback(syscall_ret, std::move(buffer));
-    });
+
+    io_uring.read_fixed(socket, std::move(callable));
 }
 
-void Client::fuse_callback(int syscall_ret, std::unique_ptr<char[]> &&buffer, size_t bufsize) {
+void Client::fuse_callback(
+    int syscall_ret, IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, FUSE_REQUEST_SIZE>> callback
+) {
     LOG_TRACE_L2(logger, "Fuse callback: {}", syscall_ret);
-    auto buffer_view = std::span{buffer.get(), bufsize};
     if (syscall_ret <= 0 && syscall_ret != -EINTR) {
         throw std::system_error(-syscall_ret, std::generic_category(), "fuse reading failure");
     } else if (syscall_ret <= 0) {
         return;
     }
-    auto fuse_buffer = fuse_buf{.size = static_cast<size_t>(syscall_ret), .mem = buffer.get()};
+    auto fuse_buffer = fuse_buf{.size = static_cast<size_t>(syscall_ret), .mem = callback->storage.data()};
     // fuse_session_process_buf_int could be called with fuse_channel, but this method is not exposed by libfuse.
     auto backup_fd = fuse_session->fd;
     fuse_session->fd = fuse_fd;
     fuse_session_process_buf(fuse_session, &fuse_buffer);
     fuse_session->fd = backup_fd;
-    io_uring.read(fuse_fd, buffer_view, 0, [this, bufsize, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-        fuse_callback(syscall_ret, std::move(buffer), bufsize);
-    });
+    auto view = std::span{callback->storage};
+    //    io_uring.read_fixed(fuse_fd, view, std::move(callback));
+    io_uring.read(fuse_fd, view, 0, std::move(callback));
 }
 
 void Client::start(const std::string &address) {
-    remotefs::Socket::connect(address, 6512);
+    socket = remotefs::Socket::connect(address, 6512);
+    //    io_uring.assign_file((socket_uring_idx = 1), socket);
 
     for (auto i = 0; i < 2; i++) {
-        auto page_size = sysconf(_SC_PAGESIZE);
-        const auto bufsize = static_cast<size_t>(FUSE_MAX_MAX_PAGES * page_size + FUSE_BUFFER_HEADER_SIZE);
-        auto buffer = std::unique_ptr<char[]>{new char[bufsize]};
-        auto buffer_view = std::span{buffer.get(), bufsize};
-        io_uring.read(fuse_fd, buffer_view, 0,
-                      [this, bufsize, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-                          fuse_callback(syscall_ret, std::move(buffer), bufsize);
-                      });
+        auto callback =
+            io_uring.get_callback<std::array<std::byte, FUSE_REQUEST_SIZE>>([this](int32_t syscall_ret, auto callback) {
+                fuse_callback(syscall_ret, std::move(callback));
+            });
+        auto view = std::span{callback->storage};
+        io_uring.read(fuse_fd, view, 0, std::move(callback));
     }
     {
-        auto buffer = std::unique_ptr<std::array<char, settings::MAX_MESSAGE_SIZE>>{
-            new std::array<char, settings::MAX_MESSAGE_SIZE>()};
-        assert(reinterpret_cast<uintptr_t>(buffer.get()) % 8 == 0);
-        auto buffer_view = std::span{buffer->data(), buffer->size()};
-        io_uring.read(socket, buffer_view, 0, [this, buffer = std::move(buffer)](int32_t syscall_ret) mutable {
-            read_callback(syscall_ret, std::move(buffer));
+        io_uring.read_fixed(socket, [this](int32_t syscall_ret, auto callback) {
+            read_callback(syscall_ret, std::move(callback));
         });
     }
 
@@ -199,7 +212,8 @@ Client::~Client() {
             fuse_remove_signal_handlers(fuse_session);
             fuse_session_destroy(fuse_session);
         },
-        fuse_session);
+        fuse_session
+    );
 }
 
 void Client::common_init(int argc, char *argv[]) {
@@ -238,75 +252,79 @@ void Client::common_init(int argc, char *argv[]) {
         .lookup =
             [](fuse_req_t req, fuse_ino_t parent, const char *name) {
                 auto &client = *Client::self;
-                LOG_TRACE_L1(client.logger, "Sending lookup for {}/{}, req={}", parent, name,
-                             reinterpret_cast<uintptr_t>(req));
-                // TODO: Error check
-                auto message_size = sizeof(messages::requests::Lookup) + strnlen(name, PATH_MAX) + 1;
-                auto message = std::unique_ptr<messages::requests::Lookup, void (*)(messages::requests::Lookup *)>{
-                    static_cast<messages::requests::Lookup *>(operator new(message_size)),
-                    [](auto *ptr) { operator delete(ptr); }};
-                message->tag = 2;
-                message->ino = parent;
-                message->req = req;
-                message->req->ch = &client.fuse_channel;
-                // TODO: Error check
-                strcpy(message->path, name);
-                auto message_view = std::span{reinterpret_cast<char *>(message.get()), message_size};
-                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int) mutable {});
+                LOG_TRACE_L1(
+                    client.logger, "Sending lookup for {}/{}, req={}", parent, name, reinterpret_cast<uintptr_t>(req)
+                );
+                auto callback = client.io_uring.get_callback<messages::requests::Lookup>([](int) {});
+                callback->storage.tag = std::byte{2};
+                callback->storage.ino = parent;
+                callback->storage.req = req;
+                callback->storage.req->ch = &client.fuse_channel;
+                strcpy(callback->storage.path.data(), name);
+                client.io_uring.write_fixed(client.socket, std::move(callback));
             },
         .getattr =
             [](fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *) {
                 auto &client = *Client::self;
 
-                LOG_TRACE_L1(client.logger, "Sending getattr, req={}, fd={}", reinterpret_cast<uintptr_t>(req),
-                             client.fuse_fd);
-                auto message =
-                    std::make_unique<messages::requests::GetAttr>(messages::requests::GetAttr{.req = req, .ino = ino});
-                message->req->ch = &client.fuse_channel;
-                auto message_view = std::span{reinterpret_cast<char *>(message.get()), sizeof(*message)};
-                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int32_t) mutable {});
+                LOG_TRACE_L1(
+                    client.logger, "Sending getattr, req={}, fd={}", reinterpret_cast<uintptr_t>(req), client.fuse_fd
+                );
+                auto callback = client.io_uring.get_callback<messages::requests::GetAttr>([](int) {});
+                callback->storage.req = req;
+                callback->storage.ino = ino;
+                callback->storage.req->ch = &client.fuse_channel;
+                client.io_uring.write_fixed(client.socket, std::move(callback));
             },
         .open =
             [](fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
                 auto &client = *Client::self;
                 LOG_TRACE_L1(client.logger, "Sending open, req={}", reinterpret_cast<uintptr_t>(req));
-                auto message = std::make_unique<messages::requests::Open>(
-                    messages::requests::Open{.req = req, .ino = ino, .file_info = *fi});
-                message->req->ch = &client.fuse_channel;
-                auto message_view = std::span{reinterpret_cast<char *>(message.get()), sizeof(*message)};
-                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int32_t) mutable {});
+                auto callback = client.io_uring.get_callback<messages::requests::Open>([](int) {});
+                callback->storage.req = req;
+                callback->storage.ino = ino;
+                callback->storage.file_info = *fi;
+                callback->storage.req->ch = &client.fuse_channel;
+                client.io_uring.write_fixed(client.socket, std::move(callback));
             },
         .read =
             [](fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *) {
                 auto &client = *Client::self;
-                LOG_TRACE_L1(client.logger, "Sending read for {} of size {}, req={}", ino, size,
-                             reinterpret_cast<uintptr_t>(req));
-                auto message = std::make_unique<messages::requests::Read>(
-                    messages::requests::Read{.req = req, .ino = ino, .size = size, .offset = off});
-                message->req->ch = &client.fuse_channel;
-                auto message_view = std::span{reinterpret_cast<char *>(message.get()), sizeof(*message)};
-                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int32_t) mutable {});
+                LOG_TRACE_L1(
+                    client.logger, "Sending read for {} of size {}, req={}", ino, size, reinterpret_cast<uintptr_t>(req)
+                );
+                auto callback = client.io_uring.get_callback<messages::requests::Read>([](int) {});
+                callback->storage.req = req;
+                callback->storage.ino = ino;
+                callback->storage.size = size;
+                callback->storage.offset = off;
+                callback->storage.req->ch = &client.fuse_channel;
+                client.io_uring.write_fixed(client.socket, std::move(callback));
             },
         .release =
             [](fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *) {
                 auto &client = *Client::self;
                 LOG_TRACE_L1(client.logger, "Sending release for {}", ino);
-                auto message =
-                    std::make_unique<messages::requests::Release>(messages::requests::Release{.req = req, .ino = ino});
-                message->req->ch = &client.fuse_channel;
-                auto message_view = std::span{reinterpret_cast<char *>(message.get()), sizeof(*message)};
-                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int32_t) mutable {});
+                auto callback = client.io_uring.get_callback<messages::requests::Release>([](int) {});
+                callback->storage.req = req;
+                callback->storage.ino = ino;
+                callback->storage.req->ch = &client.fuse_channel;
+                client.io_uring.write_fixed(client.socket, std::move(callback));
             },
         .readdir =
             [](fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *) {
                 auto &client = *Client::self;
-                LOG_TRACE_L1(client.logger, "Sending readdir for {} with off {} and size {}, req=", ino, off, size,
-                             reinterpret_cast<uint64_t>(req));
-                auto message = std::make_unique<messages::requests::ReadDir>(
-                    messages::requests::ReadDir{.req = req, .ino = ino, .size = size, .offset = off});
-                message->req->ch = &client.fuse_channel;
-                auto message_view = std::span{reinterpret_cast<char *>(message.get()), sizeof(*message)};
-                client.io_uring.write(client.socket, message_view, [message = std::move(message)](int32_t) mutable {});
+                LOG_TRACE_L1(
+                    client.logger, "Sending readdir for {} with off {} and size {}, req=", ino, off, size,
+                    reinterpret_cast<uint64_t>(req)
+                );
+                auto callback = client.io_uring.get_callback<messages::requests::ReadDir>([](int) {});
+                callback->storage.req = req;
+                callback->storage.ino = ino;
+                callback->storage.size = size;
+                callback->storage.offset = off;
+                callback->storage.req->ch = &client.fuse_channel;
+                client.io_uring.write_fixed(client.socket, std::move(callback));
             },
     };
 #pragma GCC diagnostic pop

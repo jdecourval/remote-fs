@@ -2,6 +2,7 @@
 
 #include <netdb.h>
 #include <netinet/sctp.h>
+#include <unistd.h>
 
 #include <memory>
 #include <system_error>
@@ -49,7 +50,7 @@ Socket& Socket::operator=(Socket&& other) noexcept {
 
 Socket::~Socket() {
     if (socket != -1) {
-        close(socket);
+        ::close(socket);
     }
 
     socket = -1;

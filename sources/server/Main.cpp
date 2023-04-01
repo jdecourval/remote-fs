@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
     program.add_argument("--buffers-alignment")
         .help("Override default buffers alignment")
         .scan<'d', std::size_t>()
-        .default_value(alignof(remotefs::messages::both::Ping));
+        .default_value(remotefs::IoUring::buffers_alignment);
 
     try {
         program.parse_args(argc, argv);

@@ -6,27 +6,24 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <climits>
 #include <span>
+
+#include "remotefs/tools/Bytes.h"
 
 namespace remotefs::messages {
 namespace both {
+
+template <auto MaxPaddingSize = 0, auto Alignment = 1>
 class Ping {
     [[maybe_unused]] const std::byte tag = std::byte{7};  // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
-    int buffer_size;
-    [[maybe_unused]] std::byte buffer[];  // NOLINT(cppcoreguidelines-avoid-c-arrays)
+    size_t runtime_size;
+    // Increasing the alignment is only useful if the user wish to store a structure inside padding.
+    [[maybe_unused]] alignas(Alignment) std::array<std::byte, MaxPaddingSize> padding;
 
    public:
-    static void* operator new(std::size_t, std::size_t total_size) {
-        assert(total_size >= sizeof(Ping));
-        return ::operator new (total_size, std::align_val_t{alignof(Ping)});
-    }
-
-    static void operator delete(void* ping) {
-        ::operator delete (ping, std::align_val_t{alignof(Ping)});
-    }
-
     [[nodiscard]] size_t size() const {
-        return sizeof(*this) + buffer_size;
+        return runtime_size;
     }
 
     [[nodiscard]] std::span<const std::byte> view() const {
@@ -37,10 +34,14 @@ class Ping {
         return {reinterpret_cast<std::byte*>(this), size()};
     }
 
-    explicit Ping(std::size_t total_size)
-        : buffer_size{static_cast<int>(total_size - sizeof(Ping))} {};
+    explicit Ping(size_t runtime_size)
+        : runtime_size{runtime_size} {
+        assert(runtime_size >= struct_size_after_this_member(this, this->runtime_size));
+        assert(runtime_size <= sizeof(*this));
+    }
 };
 }  // namespace both
+
 namespace requests {
 struct Open {
     const std::byte tag = std::byte{1};
@@ -53,7 +54,13 @@ struct Lookup {
     std::byte tag = std::byte{2};
     fuse_req_t req;
     fuse_ino_t ino;
-    char path[];
+    std::array<char, PATH_MAX + 1> path;
+
+    std::span<std::byte> view() {
+        auto end = std::ranges::find(path, '\0');
+        assert(end != path.end());
+        return std::span{reinterpret_cast<std::byte*>(this), reinterpret_cast<std::byte*>(std::next(end))};
+    }
 };
 
 struct GetAttr {
@@ -89,6 +96,7 @@ namespace responses {
 struct FuseReplyEntry {
     explicit FuseReplyEntry(fuse_req_t r)
         : req{r} {}
+
     explicit FuseReplyEntry(fuse_req_t r, fuse_entry_param f)
         : req{r},
           attr{f} {}
@@ -120,10 +128,12 @@ struct FuseReplyOpen {
 
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "cppcoreguidelines-pro-type-member-init"
-template <size_t max_size>
+
+template <size_t max_size = 65017>
 struct FuseReplyBuf {
     explicit FuseReplyBuf(auto r)
         : req{r} {}
+
     FuseReplyBuf(auto r, auto d)
         : req{r},
           data_size{d} {}
@@ -141,10 +151,11 @@ struct FuseReplyBuf {
         return MAX_PAYLOAD_SIZE - data_size;
     }
 
-    [[nodiscard]] size_t size() const {
+    [[nodiscard]] size_t transmit_size() const {
         return reinterpret_cast<const std::byte*>(&data) - reinterpret_cast<const std::byte*>(this) + data_size;
     }
 };
+
 #pragma clang diagnostic pop
 
 struct FuseReplyErr {
