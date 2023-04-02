@@ -67,7 +67,7 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
         static_assert(sizeof(*write_callback) <= remotefs::IoUring::buffers_size);
         //    static_assert(sizeof(*callback) == remotefs::IoUring::buffers_size);
 
-        auto view = write_callback->storage.view();
+        auto view = write_callback->get_storage().view();
         uring.write_fixed(socket, view, std::move(write_callback));
     }
 
@@ -98,9 +98,7 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
     );
     static_assert(sizeof(*read_callback) <= remotefs::IoUring::buffers_size);
 
-    auto view = read_callback->storage.view();
-    assert(view.data() > reinterpret_cast<std::byte*>(read_callback.get()));
-    assert(&view.back() < reinterpret_cast<std::byte*>(read_callback.get()) + sizeof(*read_callback.get()));
+    auto view = read_callback->get_storage().view();
     uring.read_fixed(socket, view, std::move(read_callback));
 }
 

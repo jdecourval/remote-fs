@@ -79,11 +79,9 @@ class IoUring {
     template <typename Storage>
     class CallbackWithStorageAbstract : public CallbackErased {
        public:
-        template <typename... Ts>
-        explicit CallbackWithStorageAbstract(Ts&&... args)
-            : storage{std::forward<Ts>(args)...} {}
-
-        alignas(buffers_alignment) alignas(Storage) Storage storage;
+        virtual Storage& get_storage() = 0;
+        virtual const Storage& get_storage() const = 0;
+        [[nodiscard]] virtual short get_index(const remotefs::IoUring::MemoryResource& memory_resource) const = 0;
     };
 
     template <typename Callable, typename Storage>
@@ -93,8 +91,20 @@ class IoUring {
        public:
         template <typename... Ts>
         explicit Callback(Callable&& callable, Ts&&... args)
-            : CallbackWithStorageAbstract<Storage>{std::forward<Ts>(args)...},
+            : storage{std::forward<Ts>(args)...},
               callable{std::forward<Callable>(callable)} {}
+
+        Storage& get_storage() final {
+            return storage;
+        }
+
+        const Storage& get_storage() const final {
+            return storage;
+        }
+
+        [[nodiscard]] short get_index(const MemoryResource& memory_resource) const final {
+            return memory_resource.get_index(static_cast<const void*>(this));
+        }
 
        private:
         void inline operator()(int res) final {
@@ -128,6 +138,7 @@ class IoUring {
         }
 
        public:
+        alignas(buffers_alignment) alignas(Storage) Storage storage;
         Callable callable;
     };
 
@@ -136,6 +147,64 @@ class IoUring {
 
     template <typename Storage>
     using CallbackWithStorageAbstractUniquePtr = std::unique_ptr<CallbackWithStorageAbstract<Storage>, CallbackDeleter>;
+
+    template <typename Callable, typename Storage>
+    class CallbackWithAttachedStorage final : public CallbackWithStorageAbstract<Storage> {
+        static_assert(!std::is_same_v<Storage, void>);
+
+       public:
+        explicit CallbackWithAttachedStorage(
+            Callable&& callable, std::unique_ptr<CallbackWithStorageAbstract<Storage>, CallbackDeleter> attached
+        )
+            : callable{std::forward<Callable>(callable)},
+              attached{std::move(attached)} {}
+
+        Storage& get_storage() final {
+            return attached->get_storage();
+        }
+
+        const Storage& get_storage() const final {
+            return attached->get_storage();
+        }
+
+        [[nodiscard]] short get_index(const MemoryResource& memory_resource) const final {
+            return memory_resource.get_index(attached.get());
+        }
+
+       private:
+        void inline operator()(int res) final {
+            if constexpr (std::is_invocable_v<Callable, int>) {
+                callable(res);
+            } else if constexpr (std::is_invocable_v<
+                                     Callable, int,
+                                     std::unique_ptr<CallbackWithStorageAbstract<Storage>, CallbackDeleter>>) {
+                assert(false);
+            } else {
+                static_assert(std::is_invocable_v<Callable, int>);
+            }
+        }
+
+        void inline operator()(int res, std::unique_ptr<CallbackErased, CallbackDeleter>) final {
+            if constexpr (std::is_invocable_v<Callable, int>) {
+                callable(res);
+            } else if constexpr (std::is_invocable_v<
+                                     Callable, int,
+                                     std::unique_ptr<CallbackWithStorageAbstract<Storage>, CallbackDeleter>>) {
+                callable(res, std::move(attached));
+            } else {
+                static_assert(std::is_invocable_v<
+                              Callable, int, std::unique_ptr<CallbackWithStorageAbstract<Storage>, CallbackDeleter>>);
+            }
+        }
+
+       public:
+        Callable callable;
+        std::unique_ptr<CallbackWithStorageAbstract<Storage>, CallbackDeleter> attached;
+    };
+
+    template <typename Callable, typename Storage = void>
+    using CallbackWithAttachedStoragekUniquePtr =
+        std::unique_ptr<CallbackWithAttachedStorage<Callable, Storage>, CallbackDeleter>;
 
     //    template <typename Callable>
     //    using RegisteredBuffer = CallbackUniquePtr<Callable, std::array<std::byte, BufferSize>>;
@@ -156,10 +225,10 @@ class IoUring {
     ~IoUring();
 
     // Careful, path must remain alive until the ring is submitted.
-    void queue_statx(int dir_fd, const std::string& path, struct statx* result, CallbackErasedUniquePtr callback);
+    void queue_statx(int dir_fd, std::string_view path, struct statx* result, CallbackErasedUniquePtr callback);
 
     // Careful, path must remain alive until the ring is submitted.
-    void queue_statx(int dir_fd, const std::string& path, CallbackWithStorageAbstractUniquePtr<struct statx> callback);
+    void queue_statx(int dir_fd, std::string_view path, CallbackWithStorageAbstractUniquePtr<struct statx> callback);
 
     void add_fd(int fd, CallbackErasedUniquePtr callback);
 
@@ -221,6 +290,18 @@ class IoUring {
         return CallbackErasedUniquePtr{ptr};
     }
 
+    template <typename Storage = void, typename Callable>
+    [[nodiscard]] CallbackWithStorageAbstractUniquePtr<Storage> get_callback(
+        Callable&& callable, CallbackWithStorageAbstractUniquePtr<Storage> storage
+    ) {
+        auto* ptr = get_allocator<CallbackWithAttachedStorage<Callable, Storage>>()
+                        .template new_object<CallbackWithAttachedStorage<Callable, Storage>>(
+                            std::forward<Callable>(callable), std::move(storage)
+                        );
+        assert(ptr);
+        return CallbackWithStorageAbstractUniquePtr<Storage>{ptr};
+    }
+
    private:
     static MemoryResource& get_pool();
 
@@ -245,17 +326,17 @@ class IoUring {
     }
 };
 
-void IoUring::queue_statx(int dir_fd, const std::string& path, struct statx* result, CallbackErasedUniquePtr callback) {
+void IoUring::queue_statx(int dir_fd, std::string_view path, struct statx* result, CallbackErasedUniquePtr callback) {
     assert(dir_fd >= 0 || dir_fd == AT_FDCWD);
     assert(callback);
     auto* sqe = get_sqe(std::move(callback));
-    io_uring_prep_statx(sqe, dir_fd, path.c_str(), 0, STATX_BASIC_STATS, result);
+    io_uring_prep_statx(sqe, dir_fd, path.data(), 0, STATX_BASIC_STATS, result);
 }
 
 void IoUring::queue_statx(
-    int dir_fd, const std::string& path, CallbackWithStorageAbstractUniquePtr<struct statx> callback
+    int dir_fd, std::string_view path, CallbackWithStorageAbstractUniquePtr<struct statx> callback
 ) {
-    auto result = &callback->storage;
+    auto* result = &callback->get_storage();
     queue_statx(dir_fd, path, result, std::move(callback));
 }
 
@@ -293,9 +374,11 @@ template <typename Storage>
 void IoUring::read_fixed(int fd, std::span<std::byte> target, CallbackWithStorageAbstractUniquePtr<Storage> callback) {
     assert(fd >= 0);
     assert(callback);
-    assert(target.data() >= reinterpret_cast<std::byte*>(callback.get()));
-    assert(&target.back() <= reinterpret_cast<std::byte*>(callback.get() + sizeof(*callback)));
-    auto index = get_pool().get_index(callback.get());
+
+    auto storage = singular_bytes(callback->get_storage());
+    assert(std::ranges::search(storage, target).begin() != storage.end());
+
+    auto index = callback->get_index(get_pool());
     auto* sqe = get_sqe(std::move(callback));
     io_uring_prep_read_fixed(sqe, fd, target.data(), target.size(), 0, index);
 }
@@ -305,8 +388,8 @@ void IoUring::read_fixed(int fd, Callable&& callable) {
     assert(fd >= 0);
     auto callback =
         get_callback<std::array<std::byte, MAX_CALLBACK_PAYLOAD_SIZE<Callable>>>(std::forward<Callable>(callable));
-    auto index = get_pool().get_index(callback.get());
-    auto view = singular_bytes(callback->storage);
+    auto index = callback->get_index(get_pool());
+    auto view = singular_bytes(callback->get_storage());
     auto* sqe = get_sqe(std::move(callback));
     io_uring_prep_read_fixed(sqe, fd, view.data(), view.size(), 0, index);
 }
@@ -323,20 +406,21 @@ template <typename Storage>
 void IoUring::write_fixed(int fd, std::span<std::byte> source, CallbackWithStorageAbstractUniquePtr<Storage> callback) {
     assert(fd >= 0);
     assert(callback);
-    assert(source.data() >= reinterpret_cast<std::byte*>(callback.get()));
-    assert(source.end().base() <= reinterpret_cast<std::byte*>(callback.get()) + sizeof(*callback));
-    auto index = get_pool().get_index(callback.get());
-    auto buffer_address = reinterpret_cast<std::byte*>(&callback->storage);
+
+    auto storage = singular_bytes(callback->get_storage());
+    assert(std::ranges::search(storage, source).begin() != storage.end());
+
+    auto index = callback->get_index(get_pool());
     auto* sqe = get_sqe(std::move(callback));
-    io_uring_prep_write_fixed(sqe, fd, buffer_address, source.size(), source.data() - buffer_address, index);
+    io_uring_prep_write_fixed(sqe, fd, storage.data(), source.size(), source.data() - storage.data(), index);
 }
 
 template <typename Storage>
 void IoUring::write_fixed(int fd, CallbackWithStorageAbstractUniquePtr<Storage> callback) {
     assert(fd >= 0);
     assert(callback);
-    auto view = singular_bytes(callback->storage);
-    auto index = get_pool().get_index(callback.get());
+    auto view = singular_bytes(callback->get_storage());
+    auto index = callback->get_index(get_pool());
     auto* sqe = get_sqe(std::move(callback));
     io_uring_prep_write_fixed(sqe, fd, view.data(), view.size(), 0, index);
 }

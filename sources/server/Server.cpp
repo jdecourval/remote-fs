@@ -87,48 +87,52 @@ void Server::read_callback(
         return;
     }
 
-    LOG_TRACE_L2(logger, "Read {} bytes of {}", syscall_ret, static_cast<int>(old_callback->storage[0]));
-    switch (old_callback->storage[0]) {
+    LOG_TRACE_L2(logger, "Read {} bytes of {}", syscall_ret, static_cast<int>(old_callback->get_storage()[0]));
+    switch (old_callback->get_storage()[0]) {
         case messages::requests::Open().tag: {
-            syscalls.open(*reinterpret_cast<messages::requests::Open*>(old_callback->storage.data()), client_socket);
+            syscalls.open(
+                *reinterpret_cast<messages::requests::Open*>(old_callback->get_storage().data()), client_socket
+            );
             break;
         }
         case messages::requests::Lookup().tag: {
             syscalls.lookup(
-                *reinterpret_cast<messages::requests::Lookup*>(old_callback->storage.data()), client_socket
+                *reinterpret_cast<messages::requests::Lookup*>(old_callback->get_storage().data()), client_socket
             );
             break;
         }
         case messages::requests::GetAttr().tag: {
             syscalls.getattr(
-                *reinterpret_cast<messages::requests::GetAttr*>(old_callback->storage.data()), client_socket
+                *reinterpret_cast<messages::requests::GetAttr*>(old_callback->get_storage().data()), client_socket
             );
             break;
         }
         case messages::requests::ReadDir().tag: {
             syscalls.readdir(
-                *reinterpret_cast<messages::requests::ReadDir*>(old_callback->storage.data()), client_socket
+                *reinterpret_cast<messages::requests::ReadDir*>(old_callback->get_storage().data()), client_socket
             );
             break;
         }
         case messages::requests::Read().tag:
-            syscalls.read(*reinterpret_cast<messages::requests::Read*>(old_callback->storage.data()), client_socket);
+            syscalls.read(
+                *reinterpret_cast<messages::requests::Read*>(old_callback->get_storage().data()), client_socket
+            );
             break;
         case messages::requests::Release().tag:
-            syscalls.release(*reinterpret_cast<messages::requests::Release*>(old_callback->storage.data()));
+            syscalls.release(*reinterpret_cast<messages::requests::Release*>(old_callback->get_storage().data()));
             break;
         case std::byte{7}: {
-            auto callback = io_uring.get_callback<remotefs::messages::both::Ping<IoUring::buffers_size - 40>>(
-                [old_callback = std::move(old_callback)](int ret) {
+            auto callback = io_uring.get_callback(
+                [](int ret) {
                     if (ret == -EPIPE) [[unlikely]] {
                         LOG_INFO(quill::get_logger(), "SIGPIPE, closing socket");
                     } else if (ret < 0) [[unlikely]] {
                         throw std::system_error(-ret, std::system_category(), "Failed to write to socket");
                     }
                 },
-                static_cast<size_t>(syscall_ret)
+                std::move(old_callback)
             );
-            auto view = callback->storage.view();
+            auto view = singular_bytes(callback->get_storage()).subspan(0, syscall_ret);
             io_uring.write_fixed(client_socket_int, view, std::move(callback));
             break;
         }

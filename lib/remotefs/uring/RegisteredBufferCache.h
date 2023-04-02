@@ -1,8 +1,6 @@
 #ifndef REMOTE_FS_REGISTEREDBUFFERCACHE_H
 #define REMOTE_FS_REGISTEREDBUFFERCACHE_H
 
-#include <quill/Quill.h>
-
 #include <algorithm>
 #include <cassert>
 #include <memory_resource>
@@ -35,12 +33,12 @@ class CachedRegisteredBuffersResource final : public std::pmr::memory_resource {
         }
     }
 
-    short get_index(void* ptr) {
+    short get_index(const void* ptr) const {
 #ifndef NDEBUG
         assert(ptr >= &buffers_cache.front().data.front());
         assert(ptr < &buffers_cache.back().data.back());
 #endif
-        return static_cast<Buffer*>(ptr)->index;
+        return static_cast<const Buffer*>(ptr)->index;
     }
 
     auto view() const {
@@ -52,7 +50,6 @@ class CachedRegisteredBuffersResource final : public std::pmr::memory_resource {
 
    private:
     void* do_allocate(size_t bytes, size_t alignment) final {
-        LOG_DEBUG(quill::get_logger(), "Allocating");
         auto index = std::countr_zero(active_registered_buffers);  // 0-indexed
 
         if (index >= std::numeric_limits<decltype(active_registered_buffers)>::digits) {
@@ -71,7 +68,6 @@ class CachedRegisteredBuffersResource final : public std::pmr::memory_resource {
     }
 
     void do_deallocate(void* pointer, size_t, size_t) final {
-        LOG_DEBUG(quill::get_logger(), "Deallocating");
         active_registered_buffers ^= 0b1ull << reinterpret_cast<Buffer*>(pointer)->index;
     }
 
