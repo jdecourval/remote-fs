@@ -61,7 +61,7 @@ void Server::accept_callback(int client_socket, int pipeline) {
 
 template <auto MaxBufferSize>
 void Server::read_callback(
-    int syscall_ret, Socket&& client_socket,
+    int syscall_ret, Socket client_socket,
     IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, MaxBufferSize>> old_callback
 ) {
     auto client_socket_int = static_cast<int>(client_socket);

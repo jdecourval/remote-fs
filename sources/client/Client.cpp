@@ -78,6 +78,7 @@ void Client::fuse_reply_data(
     response->headers = fuse_out_header{
         .len = narrow_cast<decltype(fuse_out_header::len)>(sizeof(fuse_out_header) + msg.data_size),
         .error = 0,
+        // TODO: Remove this horrible hack. This is because I don't have fuse_req_t definition.
         .unique = reinterpret_cast<const uint64_t *>(msg.req)[1]};
     // TODO: Remove copy
     std::memcpy(response->buffer, msg.data.data(), msg.data_size);

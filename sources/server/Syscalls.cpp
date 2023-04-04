@@ -39,8 +39,7 @@ void Syscalls::lookup(messages::requests::Lookup& message, int socket) {
     auto path = std::make_unique<std::string>(root_path / message.path.data());
     LOG_DEBUG(logger, "Looking up path={}, relative={}, root={}", *path, &message.path[0], root_path.string());
 
-    auto found = inode_cache.find(*path);
-    if (found) {
+    if (auto found = inode_cache.find(*path)) {
         auto callback = uring.get_callback<messages::responses::FuseReplyEntry>(
             [](int) {}, message.req,
             fuse_entry_param{
@@ -106,8 +105,7 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
     auto size = message.size;
     auto off = message.offset + 1;
     auto total_size = 0ull;
-    auto callable = [](int) {};
-    auto callback = uring.get_callback<messages::responses::FuseReplyBuf<>>(std::move(callable), message.req);
+    auto callback = uring.get_callback<messages::responses::FuseReplyBuf<>>([](int) {}, message.req);
     LOG_TRACE_L1(
         logger, "Received readdir for ino {} with size {} and offset {} for req {}", ino, size, off,
         reinterpret_cast<uint64_t>(message.req)
@@ -248,17 +246,16 @@ void Syscalls::open(messages::requests::Open& message, int socket) {
     auto file_info = message.file_info;
 
     // TODO: Add FOPEN_PARALLEL_DIRECT_WRITES to flags. Probably better doing it client side.
-    auto callable = [](int) {};
     if (!(file_info.flags & (O_RDWR | O_WRONLY))) {
         // Only read-only for now
         auto& inode = inode_cache.inode_from_ino(ino);
         InodeCache::open(inode);  // TODO: Handle errors
         auto callback =
-            uring.get_callback<messages::responses::FuseReplyOpen>(std::move(callable), message.req, file_info);
+            uring.get_callback<messages::responses::FuseReplyOpen>([](int) {}, message.req, file_info);
         LOG_TRACE_L2(logger, "Sending FuseReplyOpen");
         uring.write_fixed(socket, std::move(callback));
     } else {
-        auto callback = uring.get_callback<messages::responses::FuseReplyErr>(std::move(callable), message.req, EACCES);
+        auto callback = uring.get_callback<messages::responses::FuseReplyErr>([](int) {}, message.req, EACCES);
         LOG_TRACE_L2(logger, "Sending FuseReplyErr");
         uring.write_fixed(socket, std::move(callback));
     }

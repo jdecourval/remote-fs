@@ -43,14 +43,25 @@ class IoUring {
 
     class CallbackErased;
 
-    using CallbackDeleter = decltype([](CallbackErased* ptr) { get_allocator<CallbackErased>().delete_object(ptr); });
+    class CallbackDeleter {
+       public:
+        void operator()(CallbackErased* ptr) {
+            get_allocator<CallbackErased>().delete_object(ptr);
+        }
+    };
+
     using CallbackErasedUniquePtr = std::unique_ptr<CallbackErased, CallbackDeleter>;
 
     class CallbackErased {
        public:
         virtual ~CallbackErased() = default;
+        CallbackErased(const CallbackErased& copyFrom) = delete;
+        CallbackErased& operator=(const CallbackErased& copyFrom) = delete;
+        CallbackErased(CallbackErased&&) = delete;
+        CallbackErased& operator=(CallbackErased&&) = delete;
 
        private:
+        CallbackErased() = default;
         friend IoUring;
         virtual void operator()(int res) = 0;
         virtual void operator()(int res, std::unique_ptr<CallbackErased, CallbackDeleter>) = 0;
@@ -142,9 +153,6 @@ class IoUring {
         Callable callable;
     };
 
-    template <typename Callable, typename Storage = void>
-    using CallbackUniquePtr = std::unique_ptr<Callback<Callable, Storage>, CallbackDeleter>;
-
     template <typename Storage>
     using CallbackWithStorageAbstractUniquePtr = std::unique_ptr<CallbackWithStorageAbstract<Storage>, CallbackDeleter>;
 
@@ -206,16 +214,6 @@ class IoUring {
         std::unique_ptr<CallbackWithStorageAbstract<Storage>, CallbackDeleter> attached;
     };
 
-    template <typename Callable, typename Storage = void>
-    using CallbackWithAttachedStoragekUniquePtr =
-        std::unique_ptr<CallbackWithAttachedStorage<Callable, Storage>, CallbackDeleter>;
-
-    //    template <typename Callable>
-    //    using RegisteredBuffer = CallbackUniquePtr<Callable, std::array<std::byte, BufferSize>>;
-
-    template <auto Alignement>
-    class alignas(Alignement) AlignedTestClass {};
-
     template <typename Callable>
     static inline constexpr auto MAX_CALLBACK_PAYLOAD_SIZE =
         2UL * buffers_size - sizeof(Callable) -
@@ -240,12 +238,8 @@ class IoUring {
 
     void accept_fixed(int socket, CallbackErasedUniquePtr callback);
 
-    void read(int fd, std::span<std::byte> destination, size_t offset, CallbackErasedUniquePtr callback);
+    void read(int fd, std::span<std::byte> target, size_t offset, CallbackErasedUniquePtr callback);
 
-    // For registered buffer: target must be in callback
-    // TODO: CallbackWithStorageAbstractUniquePtr<Storage> is mainly used to distinguish between registered buffers and
-    // regular
-    //  buffers. Find a typesafe way instead.
     template <typename Storage>
     void read_fixed(
         int fd, std::span<std::byte> target, size_t offset, CallbackWithStorageAbstractUniquePtr<Storage> callback
@@ -276,7 +270,7 @@ class IoUring {
     void assign_buffer(int idx, std::span<const std::byte> buffer);
     void assign_file(int idx, int file);
 
-    template <typename Storage = void, typename Callable, typename... Ts>
+    template <typename Storage, typename Callable, typename... Ts>
     [[nodiscard]] CallbackWithStorageAbstractUniquePtr<Storage> get_callback(
         Callable&& callable, Ts&&... storage_args
     ) {
@@ -314,71 +308,10 @@ class IoUring {
 
    private:
     static MemoryResource& get_pool();
+    io_uring_sqe* get_sqe(CallbackErasedUniquePtr callable);
 
     io_uring ring{};
-
-    io_uring_sqe* get_sqe(CallbackErasedUniquePtr callable) {
-        auto callable_ptr = callable.release();
-
-        if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
-            io_uring_sqe_set_data(sqe, callable_ptr);
-            return sqe;
-        }
-
-        io_uring_submit(&ring);
-
-        if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
-            io_uring_sqe_set_data(sqe, callable_ptr);
-            return sqe;
-        }
-
-        throw std::runtime_error("Failed to get an SQE from the ring");
-    }
 };
-
-void IoUring::queue_statx(int dir_fd, std::string_view path, struct statx* result, CallbackErasedUniquePtr callback) {
-    assert(dir_fd >= 0 || dir_fd == AT_FDCWD);
-    assert(callback);
-    auto* sqe = get_sqe(std::move(callback));
-    io_uring_prep_statx(sqe, dir_fd, path.data(), 0, STATX_BASIC_STATS, result);
-}
-
-void IoUring::queue_statx(
-    int dir_fd, std::string_view path, CallbackWithStorageAbstractUniquePtr<struct statx> callback
-) {
-    auto* result = &callback->get_storage();
-    queue_statx(dir_fd, path, result, std::move(callback));
-}
-
-// CallbackUniquePtr<Callable> when no result (because the lambda is already there to store something)
-void IoUring::add_fd(int fd, CallbackErasedUniquePtr callback) {
-    assert(fd >= 0);
-    assert(callback);
-    auto* sqe = get_sqe(std::move(callback));
-    io_uring_prep_poll_multishot(sqe, fd, POLLIN);
-}
-
-void IoUring::accept(int socket, CallbackErasedUniquePtr callback) {
-    assert(socket >= 0);
-    assert(callback);
-    auto* sqe = get_sqe(std::move(callback));
-    io_uring_prep_multishot_accept(sqe, socket, nullptr, nullptr, 0);
-}
-
-void IoUring::accept_fixed(int socket, CallbackErasedUniquePtr callback) {
-    assert(socket >= 0);
-    assert(callback);
-    auto* sqe = get_sqe(std::move(callback));
-    // TODO: Multishot requests should ask for a different kind of object. Should still take ownership of the pointer.
-    io_uring_prep_multishot_accept_direct(sqe, socket, nullptr, nullptr, 0);
-}
-
-void IoUring::read(int fd, std::span<std::byte> destination, size_t offset, CallbackErasedUniquePtr callback) {
-    assert(fd >= 0);
-    assert(callback);
-    auto* sqe = get_sqe(std::move(callback));
-    io_uring_prep_read(sqe, fd, destination.data(), destination.size(), offset);
-}
 
 template <typename Storage>
 void IoUring::read_fixed(
@@ -387,6 +320,7 @@ void IoUring::read_fixed(
     assert(fd >= 0);
     assert(callback);
 
+    // For registered buffers: target must be in callback
     auto storage = singular_bytes(callback->get_storage());
     assert(std::ranges::search(storage, target).begin() != storage.end());
 
@@ -404,13 +338,6 @@ void IoUring::read_fixed(int fd, size_t offset, Callable&& callable) {
     auto view = singular_bytes(callback->get_storage());
     auto* sqe = get_sqe(std::move(callback));
     io_uring_prep_read_fixed(sqe, fd, view.data(), view.size(), offset, index);
-}
-
-void IoUring::write(int fd, std::span<std::byte> source, CallbackErasedUniquePtr callback) {
-    assert(fd >= 0);
-    assert(callback);
-    auto* sqe = get_sqe(std::move(callback));
-    io_uring_prep_write(sqe, fd, source.data(), source.size(), 0);
 }
 
 // For registered buffer: source must be in callback
