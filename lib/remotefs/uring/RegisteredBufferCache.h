@@ -56,6 +56,7 @@ class CachedRegisteredBuffersResource final : public std::pmr::memory_resource {
             throw std::bad_alloc();  // No more index available
         }
 
+        assert(active_registered_buffers & (0b1ull << index));
         active_registered_buffers ^= 0b1ull << index;
         auto& buffer = buffers_cache[index].data;
         auto max_size = buffer.size();
@@ -68,6 +69,7 @@ class CachedRegisteredBuffersResource final : public std::pmr::memory_resource {
     }
 
     void do_deallocate(void* pointer, size_t, size_t) final {
+        assert(!(active_registered_buffers & (0b1ull << reinterpret_cast<Buffer*>(pointer)->index)));
         active_registered_buffers ^= 0b1ull << reinterpret_cast<Buffer*>(pointer)->index;
     }
 
