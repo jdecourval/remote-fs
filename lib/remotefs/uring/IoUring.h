@@ -246,10 +246,12 @@ class IoUring {
     // regular
     //  buffers. Find a typesafe way instead.
     template <typename Storage>
-    void read_fixed(int fd, std::span<std::byte> target, CallbackWithStorageAbstractUniquePtr<Storage> callback);
+    void read_fixed(
+        int fd, std::span<std::byte> target, size_t offset, CallbackWithStorageAbstractUniquePtr<Storage> callback
+    );
 
     template <typename Callable>
-    void read_fixed(int fd, Callable&& callable);
+    void read_fixed(int fd, size_t offset, Callable&& callable);
 
     void write(int fd, std::span<std::byte> source, CallbackErasedUniquePtr callback);
 
@@ -378,7 +380,9 @@ void IoUring::read(int fd, std::span<std::byte> destination, size_t offset, Call
 }
 
 template <typename Storage>
-void IoUring::read_fixed(int fd, std::span<std::byte> target, CallbackWithStorageAbstractUniquePtr<Storage> callback) {
+void IoUring::read_fixed(
+    int fd, std::span<std::byte> target, size_t offset, CallbackWithStorageAbstractUniquePtr<Storage> callback
+) {
     assert(fd >= 0);
     assert(callback);
 
@@ -387,18 +391,18 @@ void IoUring::read_fixed(int fd, std::span<std::byte> target, CallbackWithStorag
 
     auto index = callback->get_index(get_pool());
     auto* sqe = get_sqe(std::move(callback));
-    io_uring_prep_read_fixed(sqe, fd, target.data(), target.size(), 0, index);
+    io_uring_prep_read_fixed(sqe, fd, target.data(), target.size(), offset, index);
 }
 
 template <typename Callable>
-void IoUring::read_fixed(int fd, Callable&& callable) {
+void IoUring::read_fixed(int fd, size_t offset, Callable&& callable) {
     assert(fd >= 0);
     auto callback =
         get_callback<std::array<std::byte, MAX_CALLBACK_PAYLOAD_SIZE<Callable>>>(std::forward<Callable>(callable));
     auto index = callback->get_index(get_pool());
     auto view = singular_bytes(callback->get_storage());
     auto* sqe = get_sqe(std::move(callback));
-    io_uring_prep_read_fixed(sqe, fd, view.data(), view.size(), 0, index);
+    io_uring_prep_read_fixed(sqe, fd, view.data(), view.size(), offset, index);
 }
 
 void IoUring::write(int fd, std::span<std::byte> source, CallbackErasedUniquePtr callback) {

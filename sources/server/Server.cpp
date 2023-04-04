@@ -48,7 +48,7 @@ void Server::accept_callback(int client_socket, int pipeline) {
         LOG_INFO(logger, "Accepted a connection");
         for (auto i = 0; i < pipeline; i++) {
             io_uring.read_fixed(
-                client_socket,
+                client_socket, 0,
                 [this, client_socket = Socket{client_socket}](int syscall_ret, auto callback) mutable {
                     read_callback(syscall_ret, std::move(client_socket), std::move(callback));
                 }
@@ -74,7 +74,7 @@ void Server::read_callback(
 
         LOG_ERROR(logger, "Read failed, retrying: {}", std::strerror(-syscall_ret));
         io_uring.read_fixed(
-            client_socket_int,
+            client_socket_int, 0,
             [this, client_socket = std::move(client_socket)](int syscall_ret, auto callback) mutable {
                 read_callback(syscall_ret, std::move(client_socket), std::move(callback));
             }
@@ -141,7 +141,7 @@ void Server::read_callback(
     }
 
     io_uring.read_fixed(
-        client_socket_int,
+        client_socket_int, 0,
         [this, client_socket = std::move(client_socket)](int syscall_ret, auto callback) mutable {
             read_callback(syscall_ret, std::move(client_socket), std::move(callback));
         }

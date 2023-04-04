@@ -99,7 +99,7 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
     static_assert(sizeof(*read_callback) <= remotefs::IoUring::buffers_size);
 
     auto view = read_callback->get_storage().view();
-    uring.read_fixed(socket, view, std::move(read_callback));
+    uring.read_fixed(socket, view, 0, std::move(read_callback));
 }
 
 void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring,

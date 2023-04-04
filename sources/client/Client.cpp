@@ -93,13 +93,13 @@ void Client::read_callback(
 
     if (syscall_ret < 0) {
         LOG_ERROR(logger, "Read failed: {}", std::strerror(-syscall_ret));
-        io_uring.read_fixed(socket, std::move(callable));
+        io_uring.read_fixed(socket, 0, std::move(callable));
         return;
     }
 
     if (syscall_ret == 0) {
         LOG_INFO(logger, "Read NULL message");
-        io_uring.read_fixed(socket, std::move(callable));
+        io_uring.read_fixed(socket, 0, std::move(callable));
         return;
     }
 
@@ -159,7 +159,7 @@ void Client::read_callback(
             assert(false);
     }
 
-    io_uring.read_fixed(socket, std::move(callable));
+    io_uring.read_fixed(socket, 0, std::move(callable));
 }
 
 void Client::fuse_callback(
@@ -195,7 +195,7 @@ void Client::start(const std::string &address) {
         io_uring.read(fuse_fd, view, 0, std::move(callback));
     }
     {
-        io_uring.read_fixed(socket, [this](int32_t syscall_ret, auto callback) {
+        io_uring.read_fixed(socket, 0, [this](int32_t syscall_ret, auto callback) {
             read_callback(syscall_ret, std::move(callback));
         });
     }
