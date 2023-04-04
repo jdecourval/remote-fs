@@ -28,9 +28,9 @@ class CachedRegisteredBuffersResource final : public std::pmr::memory_resource {
         // promoted left operand, the behavior is undefined
         active_registered_buffers =
             buffer_count == 0 ? 0 : ~decltype(active_registered_buffers){} >> (available_bits - buffer_count);
-        for (auto&& buffer : buffers_cache) {
-            assert(&buffer == static_cast<void*>(buffer.data.data()));
-        }
+        assert(std::ranges::all_of(buffers_cache, [](const auto& buffer) {
+            return &buffer == static_cast<const void*>(buffer.data.data());
+        }));
     }
 
     short get_index(const void* ptr) const {
