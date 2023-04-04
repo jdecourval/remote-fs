@@ -82,50 +82,50 @@ endif ()
 
 function(add_performance_flags TARGET)
     target_compile_options(${TARGET} PRIVATE
-            -fno-plt
-            -fno-semantic-interposition
-            $<IF:$<CONFIG:Debug>,-Og,-O3>
-            )
+        -fno-plt
+        -fno-semantic-interposition
+        $<IF:$<CONFIG:Debug>,-Og,-O3>
+        )
 
     target_link_options(${TARGET} PRIVATE
-            "LINKER:SHELL:-O1"
-            )
+        "LINKER:SHELL:-O1"
+        )
 endfunction()
 
 function(add_ubsan_and_asan TARGET)
     target_compile_options(${TARGET} PRIVATE
-            -fsanitize=address,undefined
-            -fno-optimize-sibling-calls
-            -fno-omit-frame-pointer
-            -fno-common
-            -fsanitize-address-use-after-scope
-            -U_FORTIFY_SOURCE
-            )
+        -fsanitize=address,undefined
+        -fno-optimize-sibling-calls
+        -fno-omit-frame-pointer
+        -fno-common
+        -fsanitize-address-use-after-scope
+        -U_FORTIFY_SOURCE
+        )
 
     target_link_options(${TARGET} PRIVATE
-            -fsanitize=address,undefined
-            -fno-optimize-sibling-calls
-            -fno-omit-frame-pointer
-            -fno-common
-            -fsanitize-address-use-after-scope
-            -U_FORTIFY_SOURCE
-            )
+        -fsanitize=address,undefined
+        -fno-optimize-sibling-calls
+        -fno-omit-frame-pointer
+        -fno-common
+        -fsanitize-address-use-after-scope
+        -U_FORTIFY_SOURCE
+        )
 endfunction()
 
 function(add_tsan TARGET)
     target_compile_options(${TARGET} PRIVATE
-            -fsanitize=thread
-            -fno-optimize-sibling-calls
-            -fno-omit-frame-pointer
-            -fno-common
-            )
+        -fsanitize=thread
+        -fno-optimize-sibling-calls
+        -fno-omit-frame-pointer
+        -fno-common
+        )
 
     target_link_options(${TARGET} PRIVATE
-            -fsanitize=thread
-            -fno-optimize-sibling-calls
-            -fno-omit-frame-pointer
-            -fno-common
-            )
+        -fsanitize=thread
+        -fno-optimize-sibling-calls
+        -fno-omit-frame-pointer
+        -fno-common
+        )
 endfunction()
 
 function(add_lto TARGET)
@@ -142,34 +142,39 @@ function(add_warnings TARGET)
         target_compile_options(${TARGET} PRIVATE /W4)
     else ()
         target_compile_options(${TARGET} PRIVATE
-                "-pipe"                     # Use pipe instead of temporary files. This slightly speed up compilation.
+            "-pipe"                     # Use pipe instead of temporary files. This slightly speed up compilation.
 
-                "-Wall"                     # Activate most warnings.
-                "-Wextra"                   # Activate more warnings.
-                "-Wshadow"                  # Warn when a name shadows another name
-                "-Wnon-virtual-dtor"        # Warn whenever a class with virtual function does not declare a virtual destructor
-                "-Wnull-dereference"        # Warn of undefined behaviors due to dereferencing a null pointer.
-                "-Wmissing-include-dirs"    # Warn about missing user-supplied include directories.
-                "-Wuninitialized"           # Warn if an automatic variable is used without first being initialized. Also warn if a non-static reference or non-static const member appears in a class without constructors.
-                "-Wstrict-overflow"         # Warn about cases where the compiler optimizes based on the assumption that signed overflow does not occur.
-                "-Wundef"                   # Warn if an undefined identifier is evaluated in an #if directive.
-                "-Wcast-align"              # Warn whenever a pointer is cast such that the required alignment of the target is increased.
-                "-Wredundant-decls"         # Warn if anything is declared more than once in the same scope.
-                "-pedantic"                 # Issue all the warnings demanded by strict ISO C and ISO C++
-                "-Wsuggest-override"        # Warn about overriding virtual functions that are not marked with the override keyword.
-                #            "-Wconversion"             # Activate conversion warnings. This yield a large number of false positive.
+            "-Wall"                     # Activate most warnings.
+            "-Wextra"                   # Activate more warnings.
+            # "-Wshadow"                 # Warn when a name shadows another name. Can be annoying with lambdas.
+            "-Wnon-virtual-dtor"        # Warn whenever a class with virtual function does not declare a virtual destructor
+            "-Wnull-dereference"        # Warn of undefined behaviors due to dereferencing a null pointer.
+            "-Wmissing-include-dirs"    # Warn about missing user-supplied include directories.
+            "-Wuninitialized"           # Warn if an automatic variable is used without first being initialized. Also warn if a non-static reference or non-static const member appears in a class without constructors.
+            "-Wstrict-overflow"         # Warn about cases where the compiler optimizes based on the assumption that signed overflow does not occur.
+            "-Wundef"                   # Warn if an undefined identifier is evaluated in an #if directive.
+            "-Wcast-align"              # Warn whenever a pointer is cast such that the required alignment of the target is increased.
+            "-Wredundant-decls"         # Warn if anything is declared more than once in the same scope.
+            "-pedantic"                 # Issue all the warnings demanded by strict ISO C and ISO C++
+            "-Wsuggest-override"        # Warn about overriding virtual functions that are not marked with the override keyword.
+            # "-Wconversion"             # Activate conversion warnings. This yield a large number of false positive.
 
-                "-Wno-unknown-pragmas"      # Make GCC not scream about CLion/clang pragmas
+            "-Wno-unknown-pragmas"      # Make GCC not scream about CLion/clang pragmas
 
-                "-Werror=return-type"       # This warning is bad enough to warrant an error
-                )
+            "-Werror=return-type"       # This warning is bad enough to warrant an error
+            )
 
         if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
             target_compile_options(${TARGET} PRIVATE
-                    "-Wsuggest-final-types"     # Warn where code quality would be improved by making a class final.
-                    "-Wsuggest-final-methods"   # Warn where code quality would be improved by making a method final.
-                    "-Wuseless-cast"            # Warn when an expression is casted to its own type.
-                    )
+                "-Wsuggest-final-types"     # Warn where code quality would be improved by making a class final.
+                "-Wsuggest-final-methods"   # Warn where code quality would be improved by making a method final.
+                "-Wuseless-cast"            # Warn when an expression is casted to its own type.
+                "-Wno-missing-field-initializers"   # It's convenient to rely on default initialization...
+                )
+        elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+            target_compile_options(${TARGET} PRIVATE
+                "-Wno-unused-lambda-capture"  # False positive with `this` capture in templated function. LLVM bug 36880.
+                )
         endif ()
     endif ()
 endfunction()
@@ -184,9 +189,9 @@ function(add_ccache TARGET)
         configure_file(${CONFIGCPP_DIR}/launch-c.in launch-c)
         configure_file(${CONFIGCPP_DIR}/launch-cxx.in launch-cxx)
         execute_process(COMMAND chmod a+rx
-                "${CMAKE_CURRENT_BINARY_DIR}/launch-c"
-                "${CMAKE_CURRENT_BINARY_DIR}/launch-cxx"
-                )
+            "${CMAKE_CURRENT_BINARY_DIR}/launch-c"
+            "${CMAKE_CURRENT_BINARY_DIR}/launch-cxx"
+            )
 
         if (CMAKE_GENERATOR STREQUAL "Xcode")
             # Set Xcode project attributes to route compilation and linking
@@ -240,10 +245,10 @@ function(add_security_flags TARGET)
 
         target_compile_definitions(${TARGET} PRIVATE "_GLIBCXX_ASSERTIONS=1")
         target_link_options(${TARGET} PRIVATE
-                "LINKER:SHELL:-z noexecstack"
-                "LINKER:SHELL:-z relro"
-                "LINKER:SHELL:-z now"
-                )
+            "LINKER:SHELL:-z noexecstack"
+            "LINKER:SHELL:-z relro"
+            "LINKER:SHELL:-z now"
+            )
     endif ()
 endfunction()
 
