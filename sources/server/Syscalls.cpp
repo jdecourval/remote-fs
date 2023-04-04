@@ -36,7 +36,7 @@ Syscalls::Syscalls(IoUring& ring)
 void Syscalls::lookup(messages::requests::Lookup& message, int socket) {
     auto ino = message.ino;
     auto root_path = std::filesystem::path{inode_cache.inode_from_ino(ino).first};
-    auto path = std::make_unique<std::filesystem::path>(root_path / message.path.data());
+    auto path = std::make_unique<std::string>(root_path / message.path.data());
     LOG_DEBUG(logger, "Looking up path={}, relative={}, root={}", *path, &message.path[0], root_path.string());
 
     auto found = inode_cache.find(*path);
@@ -54,7 +54,7 @@ void Syscalls::lookup(messages::requests::Lookup& message, int socket) {
         return;
     }
 
-    auto path_ptr = path.get();
+    auto* path_ptr = path.get();
 
     // path is moved into the closure because it needs to stay alive until iouring submit.
     auto callback = uring.get_callback<struct statx>([this, req = message.req, socket,
@@ -86,7 +86,7 @@ void Syscalls::lookup(messages::requests::Lookup& message, int socket) {
     });
 
     LOG_INFO(logger, "PATH: {}", *path_ptr);
-    uring.queue_statx(AT_FDCWD, path_ptr->string(), std::move(callback));
+    uring.queue_statx(AT_FDCWD, *path_ptr, std::move(callback));
 }
 
 void Syscalls::getattr(messages::requests::GetAttr& message, int socket) {
