@@ -148,8 +148,11 @@ class IoUring {
     template <typename Storage>
     using CallbackWithStorageAbstractUniquePtr = std::unique_ptr<CallbackWithStorageAbstract<Storage>, CallbackDeleter>;
 
+    class CallbackWithAttachedStorageInterface {};
+
     template <typename Callable, typename Storage>
-    class CallbackWithAttachedStorage final : public CallbackWithStorageAbstract<Storage> {
+    class CallbackWithAttachedStorage final : public CallbackWithStorageAbstract<Storage>,
+                                              public CallbackWithAttachedStorageInterface {
         static_assert(!std::is_same_v<Storage, void>);
 
        public:
@@ -294,6 +297,10 @@ class IoUring {
     [[nodiscard]] CallbackWithStorageAbstractUniquePtr<Storage> get_callback(
         Callable&& callable, CallbackWithStorageAbstractUniquePtr<Storage> storage
     ) {
+        static_assert(
+            !std::is_base_of_v<CallbackWithAttachedStorageInterface, decltype(callable)>,
+            "Only one level of chaining is supported for now"
+        );
         auto* ptr = get_allocator<CallbackWithAttachedStorage<Callable, Storage>>()
                         .template new_object<CallbackWithAttachedStorage<Callable, Storage>>(
                             std::forward<Callable>(callable), std::move(storage)
