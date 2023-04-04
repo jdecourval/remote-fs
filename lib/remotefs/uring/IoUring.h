@@ -189,6 +189,7 @@ class IoUring {
 
         void inline operator()(int res, std::unique_ptr<CallbackErased, CallbackDeleter>) final {
             if constexpr (std::is_invocable_v<Callable, int>) {
+                attached.reset();
                 callable(res);
             } else if constexpr (std::is_invocable_v<
                                      Callable, int,

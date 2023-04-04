@@ -140,6 +140,9 @@ void Server::read_callback(
             assert(false);
     }
 
+    // Release memory a bit sooner
+    old_callback.reset();
+
     io_uring.read_fixed(
         client_socket_int, 0,
         [this, client_socket = std::move(client_socket)](int syscall_ret, auto callback) mutable {
