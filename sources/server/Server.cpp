@@ -122,6 +122,7 @@ void Server::read_callback(
             syscalls.release(*reinterpret_cast<messages::requests::Release*>(old_callback->get_storage().data()));
             break;
         case std::byte{7}: {
+            auto view = std::span{old_callback->get_storage()}.subspan(0, syscall_ret);
             auto callback = io_uring.get_callback(
                 [](int ret) {
                     if (ret == -EPIPE) [[unlikely]] {
@@ -132,7 +133,6 @@ void Server::read_callback(
                 },
                 std::move(old_callback)
             );
-            auto view = singular_bytes(callback->get_storage()).subspan(0, syscall_ret);
             io_uring.write_fixed(client_socket_int, view, std::move(callback));
             break;
         }
