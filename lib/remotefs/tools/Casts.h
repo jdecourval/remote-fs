@@ -7,10 +7,10 @@
 namespace remotefs {
 
 template <class T, class U>
-constexpr T narrow_cast(U&& u) noexcept {
-    assert(u <= std::numeric_limits<T>::max());
-    assert(u >= std::numeric_limits<T>::min());
-    return static_cast<T>(std::forward<U>(u));
+constexpr T narrow_cast(U u) noexcept {
+    auto result = static_cast<T>(u);
+    assert(static_cast<U>(result) == u);
+    return result;
 }
 
 template <class T, class U>
