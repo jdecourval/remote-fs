@@ -20,7 +20,7 @@ IgnoreWarnings(doctest)
 fetchcontent_declare(
     quill
     GIT_REPOSITORY https://github.com/odygrd/quill.git
-    GIT_TAG v2.5.1
+    GIT_TAG v2.7.0
     UPDATE_DISCONNECTED TRUE
     GIT_SHALLOW TRUE
 )
