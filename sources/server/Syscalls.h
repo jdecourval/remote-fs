@@ -1,18 +1,27 @@
 #ifndef REMOTE_FS_SYSCALLS_H
 #define REMOTE_FS_SYSCALLS_H
 
+#include <memory>
 #include <optional>
 
 #include "Config.h"
 #include "remotefs/inodecache/InodeCache.h"
-#include "remotefs/messages/Messages.h"
-#include "remotefs/uring/IoUring.h"
 
 namespace quill {
 class Logger;
 }
 
 namespace remotefs {
+class IoUring;
+
+namespace messages::requests {
+struct Open;
+struct Lookup;
+struct GetAttr;
+struct ReadDir;
+struct Read;
+struct Release;
+}  // namespace messages::requests
 
 class Syscalls {
    public:

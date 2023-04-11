@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <filesystem>
 
+#include "remotefs/messages/Messages.h"
+#include "remotefs/uring/IoUring.h"
+
 namespace remotefs {
 namespace {
 struct stat statx_to_stat(const struct statx input) {

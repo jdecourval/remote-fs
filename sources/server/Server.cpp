@@ -5,6 +5,8 @@
 #include <memory>
 #include <optional>
 
+#include "remotefs/messages/Messages.h"
+
 namespace remotefs {
 extern "C" {
 static volatile auto log_requested = false;
