@@ -52,6 +52,7 @@ InodeCache::InodeValue::~InodeValue() noexcept {
     if (_handle != unassigned) {
         ::close(_handle);
     }
+    _handle = unassigned;
 }
 
 void InodeCache::InodeValue::open(std::string_view path) {
@@ -62,7 +63,7 @@ void InodeCache::InodeValue::open(std::string_view path) {
 }
 
 void InodeCache::InodeValue::close() {
-    assert(_handle != unassigned);
+    if (_handle != unassigned) return;
     if (::close(_handle)) [[unlikely]] {
         throw std::system_error(errno, std::generic_category(), "Closing file");
     }
@@ -74,6 +75,7 @@ bool InodeCache::InodeValue::is_open() const {
 }
 
 InodeCache::InodeValue::FileDescriptor InodeCache::InodeValue::handle() const {
+    assert(is_open());
     return _handle;
 }
 

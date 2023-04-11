@@ -34,10 +34,8 @@ class CachedRegisteredBuffersResource final : public std::pmr::memory_resource {
     }
 
     short get_index(const void* ptr) const {
-#ifndef NDEBUG
         assert(ptr >= &buffers_cache.front().data.front());
         assert(ptr < &buffers_cache.back().data.back());
-#endif
         return static_cast<const Buffer*>(ptr)->index;
     }
 
@@ -53,6 +51,7 @@ class CachedRegisteredBuffersResource final : public std::pmr::memory_resource {
         auto index = std::countr_zero(active_registered_buffers);  // 0-indexed
 
         if (index >= std::numeric_limits<decltype(active_registered_buffers)>::digits) {
+            assert(index == std::ssize(buffers_cache));
             throw std::bad_alloc();  // No more index available
         }
 
@@ -69,8 +68,11 @@ class CachedRegisteredBuffersResource final : public std::pmr::memory_resource {
     }
 
     void do_deallocate(void* pointer, size_t, size_t) final {
-        assert(!(active_registered_buffers & (0b1ull << reinterpret_cast<Buffer*>(pointer)->index)));
-        active_registered_buffers ^= 0b1ull << reinterpret_cast<Buffer*>(pointer)->index;
+        auto index = reinterpret_cast<Buffer*>(pointer)->index;
+        assert(index >= 0);
+        assert(index < std::ssize(buffers_cache));
+        assert(!(active_registered_buffers & (0b1ull << index)));
+        active_registered_buffers ^= 0b1ull << index;
     }
 
     [[nodiscard]] bool do_is_equal(const memory_resource& other) const noexcept final {

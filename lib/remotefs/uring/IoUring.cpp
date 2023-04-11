@@ -31,11 +31,15 @@ IoUring::~IoUring() {
 }
 
 IoUring::IoUring(IoUring&& source) noexcept {
-    std::swap(ring, source.ring);
+    assert(this != &source);
+    ring = source.ring;
+    source.ring = {};
 }
 
-IoUring& IoUring::operator=(IoUring source) noexcept {
-    std::swap(ring, source.ring);
+IoUring& IoUring::operator=(IoUring&& source) noexcept {
+    assert(this != &source);
+    ring = source.ring;
+    source.ring = {};
     return *this;
 }
 
