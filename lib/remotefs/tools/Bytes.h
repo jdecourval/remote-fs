@@ -18,11 +18,6 @@ auto singular_bytes(T& t) {
     return std::as_writable_bytes(singular_span(t));
 }
 
-template <typename T, typename U>
-long long struct_size_after_this_member(const T* self, const U& member) {
-    return sizeof(member) + (reinterpret_cast<const std::byte*>(&member) - reinterpret_cast<const std::byte*>(self));
-}
-
 // From https://stackoverflow.com/a/72128846
 
 #endif  // REMOTE_FS_BYTES_H

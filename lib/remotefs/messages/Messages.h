@@ -1,3 +1,6 @@
+#pragma clang diagnostic push
+#pragma ide diagnostic ignored "cppcoreguidelines-pro-type-member-init"
+#pragma ide diagnostic ignored "cppcoreguidelines-avoid-const-or-ref-data-members"
 #ifndef REMOTE_FS_MESSAGES_H
 #define REMOTE_FS_MESSAGES_H
 
@@ -36,22 +39,21 @@ class Ping {
 
     explicit Ping(size_t runtime_size)
         : runtime_size{runtime_size} {
-        assert(runtime_size >= struct_size_after_this_member(this, this->runtime_size));
-        assert(runtime_size <= sizeof(*this));
+        assert(runtime_size <= padding.size());
     }
 };
 }  // namespace both
 
 namespace requests {
 struct Open {
-    const std::byte tag = std::byte{1};
+    [[maybe_unused]] const std::byte tag = std::byte{1};
     fuse_req_t req;
     fuse_ino_t ino;
     fuse_file_info file_info;
 };
 
 struct Lookup {
-    std::byte tag = std::byte{2};
+    [[maybe_unused]] std::byte tag = std::byte{2};
     fuse_req_t req;
     fuse_ino_t ino;
     std::array<char, PATH_MAX + 1> path;
@@ -64,13 +66,13 @@ struct Lookup {
 };
 
 struct GetAttr {
-    const std::byte tag = std::byte{3};
+    [[maybe_unused]] const std::byte tag = std::byte{3};
     fuse_req_t req;
     fuse_ino_t ino;
 };
 
 struct ReadDir {
-    const std::byte tag = std::byte{4};
+    [[maybe_unused]] const std::byte tag = std::byte{4};
     fuse_req_t req;
     fuse_ino_t ino;
     size_t size;
@@ -78,7 +80,7 @@ struct ReadDir {
 };
 
 struct Read {
-    const std::byte tag = std::byte{5};
+    [[maybe_unused]] const std::byte tag = std::byte{5};
     fuse_req_t req;
     fuse_ino_t ino;
     size_t size;
@@ -86,7 +88,7 @@ struct Read {
 };
 
 struct Release {
-    const std::byte tag = std::byte{6};
+    [[maybe_unused]] const std::byte tag = std::byte{6};
     fuse_req_t req;
     fuse_ino_t ino;
 };
@@ -101,7 +103,7 @@ struct FuseReplyEntry {
         : req{r},
           attr{f} {}
 
-    const std::byte tag = std::byte{1};
+    [[maybe_unused]] const std::byte tag = std::byte{1};
     fuse_req_t req;
     fuse_entry_param attr;
 };
@@ -111,7 +113,7 @@ struct FuseReplyAttr {
         : req{r},
           attr{a} {}
 
-    const std::byte tag = std::byte{2};
+    [[maybe_unused]] const std::byte tag = std::byte{2};
     fuse_req_t req;
     struct stat attr;
 };
@@ -121,7 +123,7 @@ struct FuseReplyOpen {
         : req{r},
           file_info(f) {}
 
-    const std::byte tag = std::byte{3};
+    [[maybe_unused]] const std::byte tag = std::byte{3};
     fuse_req_t req;
     fuse_file_info file_info;
 };
@@ -154,6 +156,8 @@ struct FuseReplyBuf {
     [[nodiscard]] size_t transmit_size() const {
         return reinterpret_cast<const std::byte*>(&data) - reinterpret_cast<const std::byte*>(this) + data_size;
     }
+
+    static_assert(MAX_PAYLOAD_SIZE > 0);
 };
 
 #pragma clang diagnostic pop
@@ -170,3 +174,5 @@ struct FuseReplyErr {
 }  // namespace responses
 }  // namespace remotefs::messages
 #endif  // REMOTE_FS_MESSAGES_H
+
+#pragma clang diagnostic pop
