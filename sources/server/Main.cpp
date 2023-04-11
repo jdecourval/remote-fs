@@ -95,6 +95,7 @@ int main(int argc, char* argv[]) {
         .default_value(remotefs::IoUring::wait_min_batch_size_default);
     program.add_argument("--batch-wait-timeout")
         .help("How long to maximally wait for --min-batch.")
+        .scan<'d', long>()
         .default_value(duration_cast<std::chrono::nanoseconds>(remotefs::IoUring::wait_timeout_default).count());
     program.add_argument("--buffers-alignment")
         .help("Override default buffers alignment")
@@ -145,9 +146,10 @@ int main(int argc, char* argv[]) {
                                                     !program.get<bool>("--nagle"),
                                                     program.get<bool>("--disable-fragment")};
 
-    auto server = remotefs::Server(program.get("address"), program.get<int>("port"), socket_options,
-                                   program.get<bool>("--metrics"), program.get<int>("--ring-depth"),
-                                   program.get<int>("--register-buffers"), program.get<int>("--cached-buffers"));
+    auto server = remotefs::Server(
+        program.get("address"), program.get<int>("port"), socket_options, program.get<bool>("--metrics"),
+        program.get<int>("--ring-depth"), program.get<int>("--register-buffers")
+    );
 
     LOG_DEBUG(logger, "Ready to start");
     if (program.get<int>("--threads") > 1) {

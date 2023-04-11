@@ -20,8 +20,7 @@ class Server {
    public:
     explicit Server(
         const std::string& address, int port, const Socket::Options& socket_options, bool metrics_on_stop = false,
-        int ring_depth = remotefs::IoUring::queue_depth_default, int max_registered_buffers = 64,
-        int cached_buffers = 64, int max_clients = 64
+        int ring_depth = remotefs::IoUring::queue_depth_default, int max_registered_buffers = 64, int max_clients = 64
     );
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;

@@ -27,12 +27,12 @@ void signal_term_handler(int signal) {
 
 Server::Server(
     const std::string& address, int port, const Socket::Options& socket_options, bool metrics_on_stop, int ring_depth,
-    int max_registered_buffers, int cached_buffers, int max_clients
+    int max_registered_buffers, int max_clients
 )
     : socket{},
       logger{quill::get_logger()},
       metric_registry{},
-      io_uring{ring_depth},
+      io_uring{ring_depth, max_registered_buffers},
       syscalls{io_uring},
       _metrics_on_stop{metrics_on_stop} {
     std::signal(SIGUSR1, signal_usr1_handler);
@@ -89,9 +89,12 @@ void Server::read_callback(
         return;
     }
 
-    LOG_TRACE_L2(logger, "Read {} bytes of {}", syscall_ret, static_cast<int>(old_callback->get_storage()[0]));
+    LOG_TRACE_L1(logger, "1. Read {} bytes of {}", syscall_ret, static_cast<int>(old_callback->get_storage()[0]));
     switch (old_callback->get_storage()[0]) {
         case messages::requests::Open().tag: {
+            // TODO: Check alignment requirement after cast
+            // TODO: Move all of that to a unique_ptr_reinterpret_cast helper
+            // TODO: Move pointer into handler so that it can be freed sooner, and uniformize Ping handler?
             syscalls.open(
                 *reinterpret_cast<messages::requests::Open*>(old_callback->get_storage().data()), client_socket
             );
@@ -180,10 +183,10 @@ void Server::start(int pipeline, int min_batch_size, std::chrono::nanoseconds wa
     }
 
     while (!stop_requested) [[likely]] {
-        //        LOG_INFO(logger, "loop");
         {
             auto tracker = wait_time.track_scope();
             if (auto tasks_run = io_uring.queue_wait(min_batch_size, wait_timeout)) {
+                LOG_TRACE_L1(logger, "looped, {} task executed", tasks_run);
                 tasks_per_iteration += tasks_run;
             }
         }
