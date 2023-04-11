@@ -9,7 +9,7 @@ using remotefs::messages::both::Ping;
 
 TestClient::TestClient(
     const std::string& address, int port, remotefs::Socket::Options socket_options, int threads_n, int sockets_n,
-    int pipeline, size_t chunk_size, bool share_ring, int ring_depth
+    int pipeline, size_t chunk_size, bool share_ring, int ring_depth, int register_buffers
 )
     : shared_ring{share_ring} {
     assert(sockets_n >= 0);
@@ -24,7 +24,7 @@ TestClient::TestClient(
     auto uring_n = share_ring ? 1 : threads_n;
     urings.reserve(uring_n);
     for (auto i = 0; i < uring_n; i++) {
-        urings.emplace_back(ring_depth);
+        urings.emplace_back(ring_depth, register_buffers);
     }
 
     threads.reserve(threads_n);
@@ -102,9 +102,7 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
     uring.read_fixed(socket, view, 0, std::move(read_callback));
 }
 
-void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring,
-                       int register_buffers) {
-    auto thread_id = 0;
+void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring) {
     for (auto& thread : threads) {
         *thread.stages_running = static_cast<int>(std::ssize(thread.stages));
         thread.thread = std::jthread{

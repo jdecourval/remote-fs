@@ -15,6 +15,7 @@ volatile bool stop_requested = false;
 argparse::ArgumentParser program("test client");
 auto verbosity = 0;
 }  // namespace
+
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables)
 
 void signal_handler(int signal) {
@@ -93,7 +94,8 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
     parser.add_argument("-R", "--disable-fragment")
         .help(
             "Enforce that no SCTP fragmentation occurs. "
-            "Have no effect if --chunk-size is smaller than --fragment-size.")
+            "Have no effect if --chunk-size is smaller than --fragment-size."
+        )
         .default_value(false)
         .implicit_value(true);
     parser.add_argument("-O", "--ordered-delivery")
@@ -182,16 +184,18 @@ int main(int argc, char* argv[]) {
         program.get<int>("--pipeline"),
         remotefs::narrow_cast<size_t>(program.get<int>("--chunk-size")),
         program.get<bool>("--share-ring"),
-        program.get<int>("--ring-depth")};
+        program.get<int>("--ring-depth"),
+        program.get<int>("--register-buffers")};
 
     if (program.get<bool>("--register-sockets")) {
         client.register_sockets();
         throw std::logic_error("--register-sockets is unimplemented.");
     }
 
-    client.start(program.get<int>("--min-batch"), std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
-                 program.get<long>("--max-size"), program.get<bool>("--register-ring"),
-                 program.get<int>("--register-buffers"));
+    client.start(
+        program.get<int>("--min-batch"), std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
+        program.get<long>("--max-size"), program.get<bool>("--register-ring")
+    );
 
     std::signal(SIGTERM, signal_handler);
     std::signal(SIGINT, signal_handler);

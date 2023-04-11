@@ -50,12 +50,11 @@ class TestClient {
    public:
     TestClient(
         const std::string& address, int port, remotefs::Socket::Options socket_options, int threads_n, int sockets_n,
-        int pipeline, size_t chunk_size, bool share_ring, int ring_depth
+        int pipeline, size_t chunk_size, bool share_ring, int ring_depth, int register_buffers
     );
     ~TestClient();
     [[nodiscard]] bool done() const;
-    void start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring,
-               int register_buffers);
+    void start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring);
     void register_sockets();
 
    private:
