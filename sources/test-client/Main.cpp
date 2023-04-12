@@ -121,7 +121,7 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
     parser.add_argument("--buffers-alignment")
         .help("Override default buffers alignment")
         .scan<'d', std::size_t>()
-        .default_value(remotefs::IoUring::buffers_alignment);
+        .default_value(remotefs::buffers_alignment);
 
     parser.add_argument("address").help("Address to connect to.");
     parser.add_argument("port").help("Port to connect to.").scan<'d', int>().default_value(6512);

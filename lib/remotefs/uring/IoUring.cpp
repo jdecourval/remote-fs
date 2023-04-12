@@ -4,11 +4,12 @@
 #include <iostream>
 
 namespace {
-std::unique_ptr<remotefs::IoUring::MemoryResource> pool_static = nullptr;
+std::unique_ptr<remotefs::CachedRegisteredBuffersResource<remotefs::buffers_size>> pool_static = nullptr;
 }
 
 namespace remotefs {
-IoUring::IoUring(int queue_depth, short registered_buffers) {
+
+IoUring::IoUring(int queue_depth, int registered_buffers) {
     if (auto ret = io_uring_queue_init(queue_depth, &ring, 0); ret < 0) {
         throw std::system_error(-ret, std::generic_category(), "Queue initialization");
     }
@@ -18,7 +19,7 @@ IoUring::IoUring(int queue_depth, short registered_buffers) {
         register_sparse_buffers(registered_buffers);
     }
 
-    pool_static = std::make_unique<MemoryResource>(registered_buffers);
+    pool_static = std::make_unique<CachedRegisteredBuffersResource<buffers_size>>(registered_buffers);
     for (auto&& [idx, buffer] : pool_static->view()) {
         assign_buffer(idx, buffer);
     }
@@ -55,6 +56,9 @@ unsigned IoUring::queue_wait(int min_batch_size, std::chrono::nanoseconds wait_t
         throw std::system_error(-ret, std::generic_category(), "io_uring_submit_and_wait_timeout failed");
     }
 
+    assert(!io_uring_cq_has_overflow(&ring));
+    to_clean_on_submit.clear();
+
     unsigned completed = 0;
     unsigned head;
     struct io_uring_cqe* cqe;
@@ -67,11 +71,14 @@ unsigned IoUring::queue_wait(int min_batch_size, std::chrono::nanoseconds wait_t
         // For these requests, the initial callback shouldn't destroy or modify the buffer.
         // Zero copy is not compatible with SCTP and is therefore not used for the moment.
         assert(!(cqe->flags & IORING_CQE_F_NOTIF));
-        if (callback != nullptr) [[likely]] {
+        if (callback != nullptr) {
             if (cqe->flags & IORING_CQE_F_MORE) {
+                // There will be more data associated to this SQE, the callback should not be freed.
                 (*callback)(cqe->res);
             } else {
-                (*callback)(cqe->res, CallbackErasedUniquePtr{callback});
+                // Move the callback to the user (if he wants it). In all cases, it will be freed after by the ptr.
+                static_assert(std::unique_ptr<CallbackErased>::deleter_type::is_proper_deleter);
+                (*callback)(cqe->res, std::unique_ptr<CallbackErased>{callback});
             }
         }
     }
@@ -111,30 +118,47 @@ void IoUring::assign_file(int idx, int file) {
     }
 }
 
-IoUring::MemoryResource& IoUring::get_pool() {
+CachedRegisteredBuffersResource<buffers_size>& get_pool() {
     assert(pool_static);
     return *pool_static;
 }
 
-io_uring_sqe* IoUring::get_sqe(IoUring::CallbackErasedUniquePtr callable) {
+io_uring_sqe* IoUring::get_sqe(std::unique_ptr<CallbackErased> callable) {
+    static_assert(decltype(callable)::deleter_type::is_proper_deleter);
+    assert(callable);
+
     auto callable_ptr = callable.release();
 
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
-        io_uring_sqe_set_data(sqe, callable_ptr);
+        if (dynamic_cast<details::CallbackNop*>(callable_ptr)) {
+            to_clean_on_submit.push_front(std::unique_ptr<CallbackErased>{callable_ptr});
+            // Explicitly setting nullptr is not necessary
+            io_uring_sqe_set_data(sqe, nullptr);
+        } else {
+            io_uring_sqe_set_data(sqe, callable_ptr);
+        }
         return sqe;
     }
 
+    // TODO: Metric/log
     io_uring_submit(&ring);
 
     if (auto* sqe = io_uring_get_sqe(&ring); sqe != nullptr) [[likely]] {
-        io_uring_sqe_set_data(sqe, callable_ptr);
+        if (dynamic_cast<details::CallbackNop*>(callable_ptr)) {
+            to_clean_on_submit.push_front(std::unique_ptr<CallbackErased>{callable_ptr});
+            io_uring_sqe_set_data(sqe, nullptr);
+        } else {
+            io_uring_sqe_set_data(sqe, callable_ptr);
+        }
         return sqe;
     }
 
     throw std::runtime_error("Failed to get an SQE from the ring");
 }
 
-void IoUring::queue_statx(int dir_fd, std::string_view path, struct statx* result, CallbackErasedUniquePtr callback) {
+void IoUring::queue_statx(
+    int dir_fd, std::string_view path, struct statx* result, std::unique_ptr<CallbackErased> callback
+) {
     assert(dir_fd >= 0 || dir_fd == AT_FDCWD);
     assert(callback);
     auto* sqe = get_sqe(std::move(callback));
@@ -142,28 +166,28 @@ void IoUring::queue_statx(int dir_fd, std::string_view path, struct statx* resul
 }
 
 void IoUring::queue_statx(
-    int dir_fd, std::string_view path, CallbackWithStorageAbstractUniquePtr<struct statx> callback
+    int dir_fd, std::string_view path, std::unique_ptr<CallbackWithStorageAbstract<struct statx>> callback
 ) {
     auto* result = &callback->get_storage();
     queue_statx(dir_fd, path, result, std::move(callback));
 }
 
 // CallbackUniquePtr<Callable> when no result (because the lambda is already there to store something)
-void IoUring::add_fd(int fd, CallbackErasedUniquePtr callback) {
+void IoUring::add_fd(int fd, std::unique_ptr<CallbackErased> callback) {
     assert(fd >= 0);
     assert(callback);
     auto* sqe = get_sqe(std::move(callback));
     io_uring_prep_poll_multishot(sqe, fd, POLLIN);
 }
 
-void IoUring::accept(int socket, CallbackErasedUniquePtr callback) {
+void IoUring::accept(int socket, std::unique_ptr<CallbackErased> callback) {
     assert(socket >= 0);
     assert(callback);
     auto* sqe = get_sqe(std::move(callback));
     io_uring_prep_multishot_accept(sqe, socket, nullptr, nullptr, 0);
 }
 
-void IoUring::accept_fixed(int socket, CallbackErasedUniquePtr callback) {
+void IoUring::accept_fixed(int socket, std::unique_ptr<CallbackErased> callback) {
     assert(socket >= 0);
     assert(callback);
     auto* sqe = get_sqe(std::move(callback));
@@ -171,14 +195,14 @@ void IoUring::accept_fixed(int socket, CallbackErasedUniquePtr callback) {
     io_uring_prep_multishot_accept_direct(sqe, socket, nullptr, nullptr, 0);
 }
 
-void IoUring::read(int fd, std::span<std::byte> target, size_t offset, CallbackErasedUniquePtr callback) {
+void IoUring::read(int fd, std::span<std::byte> target, size_t offset, std::unique_ptr<CallbackErased> callback) {
     assert(fd >= 0);
     assert(callback);
     auto* sqe = get_sqe(std::move(callback));
     io_uring_prep_read(sqe, fd, target.data(), target.size(), offset);
 }
 
-void IoUring::write(int fd, std::span<std::byte> source, CallbackErasedUniquePtr callback) {
+void IoUring::write(int fd, std::span<std::byte> source, std::unique_ptr<CallbackErased> callback) {
     assert(fd >= 0);
     assert(callback);
     auto* sqe = get_sqe(std::move(callback));

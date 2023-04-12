@@ -31,15 +31,15 @@ class Client {
 
     template <auto BufferSize>
     void read_callback(
-        int syscall_ret, IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, BufferSize>> old_callback
+        int syscall_ret, std::unique_ptr<CallbackWithStorageAbstract<std::array<std::byte, BufferSize>>> old_callback
     );
 
     void fuse_callback(
-        int syscall_ret, IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, FUSE_REQUEST_SIZE>> buffer
+        int syscall_ret, std::unique_ptr<CallbackWithStorageAbstract<std::array<std::byte, FUSE_REQUEST_SIZE>>> buffer
     );
 
     template <auto BufferSize>
-    void fuse_reply_data(IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, BufferSize>> buffer);
+    void fuse_reply_data(std::unique_ptr<CallbackWithStorageAbstract<std::array<std::byte, BufferSize>>> buffer);
     quill::Logger* logger;
     remotefs::Socket socket;
     IoUring io_uring;

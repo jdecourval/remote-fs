@@ -16,6 +16,8 @@ add_library(remotefs
     remotefs/tools/Bytes.h
     remotefs/tools/Casts.h
     remotefs/uring/RegisteredBufferCache.h
+    remotefs/uring/Callbacks.h
+    remotefs/uring/CallbacksImpl.h
     )
 
 set_target_properties(remotefs PROPERTIES LINKER_LANGUAGE CXX)

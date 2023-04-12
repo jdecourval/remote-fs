@@ -50,7 +50,7 @@ Client::Client(int argc, char *argv[])
 
 template <auto BufferSize>
 void Client::fuse_reply_data(
-    IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, BufferSize>> old_callback
+    std::unique_ptr<CallbackWithStorageAbstract<std::array<std::byte, BufferSize>>> old_callback
 ) {
     using msg_t = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>;
     auto &msg = *reinterpret_cast<msg_t *>(old_callback->get_storage().data());
@@ -88,7 +88,7 @@ void Client::fuse_reply_data(
 
 template <auto BufferSize>
 void Client::read_callback(
-    int syscall_ret, IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, BufferSize>> old_callback
+    int syscall_ret, std::unique_ptr<CallbackWithStorageAbstract<std::array<std::byte, BufferSize>>> old_callback
 ) {
     auto callable = [this](int32_t syscall_ret, auto callback) { read_callback(syscall_ret, std::move(callback)); };
 
@@ -164,7 +164,7 @@ void Client::read_callback(
 }
 
 void Client::fuse_callback(
-    int syscall_ret, IoUring::CallbackWithStorageAbstractUniquePtr<std::array<std::byte, FUSE_REQUEST_SIZE>> callback
+    int syscall_ret, std::unique_ptr<CallbackWithStorageAbstract<std::array<std::byte, FUSE_REQUEST_SIZE>>> callback
 ) {
     LOG_TRACE_L2(logger, "Fuse callback: {}", syscall_ret);
     if (syscall_ret <= 0 && syscall_ret != -EINTR) {
@@ -187,7 +187,7 @@ void Client::start(const std::string &address) {
     socket = remotefs::Socket::connect(address, 6512);
     //    io_uring.assign_file((socket_uring_idx = 1), socket);
 
-    for (auto i = 0; i < 2; i++) {
+    for (auto i = 0; i < 1; i++) {
         auto callback =
             io_uring.get_callback<std::array<std::byte, FUSE_REQUEST_SIZE>>([this](int32_t syscall_ret, auto callback) {
                 fuse_callback(syscall_ret, std::move(callback));

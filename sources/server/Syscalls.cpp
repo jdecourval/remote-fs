@@ -218,7 +218,7 @@ void Syscalls::read(messages::requests::Read& message, int socket) {
 
     auto callable = [this, socket](
                         int ret,
-                        IoUring::CallbackWithStorageAbstractUniquePtr<messages::responses::FuseReplyBuf<>> old_callback
+                        std::unique_ptr<CallbackWithStorageAbstract<messages::responses::FuseReplyBuf<>>> old_callback
                     ) {
         if (ret >= 0) [[likely]] {
             auto callback = uring.get_callback([](int) {}, std::move(old_callback));
@@ -239,7 +239,6 @@ void Syscalls::read(messages::requests::Read& message, int socket) {
     };
     auto callback = uring.get_callback<messages::responses::FuseReplyBuf<>>(std::move(callable), message.req);
     auto buffer_view = std::span{callback->get_storage().data.begin(), narrow_cast<size_t>(to_read)};
-    assert(to_read <= callback->get_storage().data.size());
 
     uring.read_fixed(file_handle, buffer_view, off, std::move(callback));
 }
