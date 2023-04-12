@@ -52,19 +52,14 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
     {
         auto write_callable = [](int) {};
 
-        // TODO: This doesn't exactly work because the size of Ping affects callable's placement in Callback.
-        //  This could be fixed by moving callable before storage in Callback, but this hsa other consequences
+        // TODO: This doesn't exactly work because the size of Ping affects callable's placement in CallbackEmpty.
+        //  This could be fixed by moving callable before storage in CallbackEmpty, but this hsa other consequences
         //  Alternatively, this could be solved an iterative constexpr function.
-        constexpr auto max_write_payload_size =
-            remotefs::IoUring::buffers_size -
-            sizeof(remotefs::IoUring::Callback<
-                   decltype(write_callable), remotefs::messages::both::Ping<1, remotefs::IoUring::buffers_alignment>>) -
-            1;
-        auto write_callback = uring.get_callback<remotefs::messages::both::Ping<max_write_payload_size>>(
-            std::move(write_callable), chunk_size - 100
-        );
+        //        constexpr auto max_write_payload_size =
+        auto write_callback =
+            uring.get_callback<remotefs::messages::both::Ping<65475>>(std::move(write_callable), chunk_size - 100);
 
-        static_assert(sizeof(*write_callback) <= remotefs::IoUring::buffers_size);
+        static_assert(sizeof(*write_callback) <= remotefs::buffers_size);
         //    static_assert(sizeof(*callback) == remotefs::IoUring::buffers_size);
 
         auto view = write_callback->get_storage().view();
@@ -87,16 +82,9 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
         };
     };
 
-    constexpr auto max_read_payload_size =
-        remotefs::IoUring::buffers_size -
-        sizeof(remotefs::IoUring::Callback<
-               decltype(read_callable), remotefs::messages::both::Ping<1, remotefs::IoUring::buffers_alignment>>) -
-        1;
-
-    auto read_callback = uring.get_callback<remotefs::messages::both::Ping<max_read_payload_size>>(
-        std::move(read_callable), chunk_size - 100
-    );
-    static_assert(sizeof(*read_callback) <= remotefs::IoUring::buffers_size);
+    auto read_callback =
+        uring.get_callback<remotefs::messages::both::Ping<65475>>(std::move(read_callable), chunk_size - 100);
+    static_assert(sizeof(*read_callback) <= remotefs::buffers_size);
 
     auto view = read_callback->get_storage().view();
     uring.read_fixed(socket, view, 0, std::move(read_callback));
