@@ -20,6 +20,7 @@ namespace remotefs {
 class Client {
     static const auto PAGE_SIZE = 4096;
     static const auto FUSE_REQUEST_SIZE = FUSE_MAX_MAX_PAGES * PAGE_SIZE + FUSE_BUFFER_HEADER_SIZE;
+    using FuseReplyBuf = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>;
 
    public:
     explicit Client(int argc, char* argv[]);

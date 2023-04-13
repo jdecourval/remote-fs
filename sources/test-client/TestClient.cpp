@@ -5,13 +5,10 @@
 
 #include "EngFormat-Cpp/eng_format.hpp"
 
-using remotefs::messages::both::Ping;
-
 TestClient::TestClient(
     const std::string& address, int port, remotefs::Socket::Options socket_options, int threads_n, int sockets_n,
     int pipeline, size_t chunk_size, bool share_ring, int ring_depth, int register_buffers
-)
-    : shared_ring{share_ring} {
+) {
     assert(sockets_n >= 0);
     assert(threads_n > 0);
 
@@ -56,8 +53,7 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
         //  This could be fixed by moving callable before storage in CallbackEmpty, but this hsa other consequences
         //  Alternatively, this could be solved an iterative constexpr function.
         //        constexpr auto max_write_payload_size =
-        auto write_callback =
-            uring.get_callback<remotefs::messages::both::Ping<65475>>(std::move(write_callable), chunk_size - 100);
+        auto write_callback = uring.get_callback<Ping>(std::move(write_callable), chunk_size - 100);
 
         static_assert(sizeof(*write_callback) <= remotefs::buffers_size);
         //    static_assert(sizeof(*callback) == remotefs::IoUring::buffers_size);
@@ -82,8 +78,7 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
         };
     };
 
-    auto read_callback =
-        uring.get_callback<remotefs::messages::both::Ping<65475>>(std::move(read_callable), chunk_size - 100);
+    auto read_callback = uring.get_callback<Ping>(std::move(read_callable), chunk_size - 100);
     static_assert(sizeof(*read_callback) <= remotefs::buffers_size);
 
     auto view = read_callback->get_storage().view();
@@ -110,13 +105,15 @@ void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout
                     thread.uring.queue_wait(min_batch_size, wait_timeout);
                 }
                 auto thread_time = std::chrono::duration_cast<std::chrono::duration<double>>(
-                    std::chrono::high_resolution_clock::now() - thread.start);
+                    std::chrono::high_resolution_clock::now() - thread.start
+                );
                 std::cout << "thread-time:" << to_engineering_string(thread_time.count(), 3, eng_prefixed, "s")
                           << std::endl;
                 std::cout << to_engineering_string(
                                  static_cast<double>(thread.stages.back().bandwidth.get()) /
                                      std::chrono::duration_cast<std::chrono::duration<double>>(thread_time).count(),
-                                 3, eng_prefixed, "B/s")
+                                 3, eng_prefixed, "B/s"
+                             )
                           << std::endl;
                 std::cout << thread.metrics << std::endl;
             }};

@@ -6,6 +6,7 @@
 
 #include "Config.h"
 #include "remotefs/inodecache/InodeCache.h"
+#include "remotefs/messages/Messages.h"
 
 namespace quill {
 class Logger;
@@ -14,16 +15,9 @@ class Logger;
 namespace remotefs {
 class IoUring;
 
-namespace messages::requests {
-struct Open;
-struct Lookup;
-struct GetAttr;
-struct ReadDir;
-struct Read;
-struct Release;
-}  // namespace messages::requests
-
 class Syscalls {
+    using FuseReplyBuf = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>;
+
    public:
     explicit Syscalls(IoUring& ring);
     void open(messages::requests::Open& message, int socket);

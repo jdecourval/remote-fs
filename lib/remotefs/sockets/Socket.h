@@ -10,7 +10,7 @@ namespace detail {
 struct Options {
     std::optional<long> rx_buffer_size = {};
     std::optional<long> tx_buffer_size = {};
-    int delivery_point = 65455;
+    int delivery_point = 65536;
     int fragment_size = 0;  // 0 -> will not be limited, except by the PMTU
     std::uint16_t max_streams = 64;
     bool ordered = false;

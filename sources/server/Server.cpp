@@ -186,7 +186,7 @@ void Server::start(int pipeline, int min_batch_size, std::chrono::nanoseconds wa
         {
             auto tracker = wait_time.track_scope();
             if (auto tasks_run = io_uring.queue_wait(min_batch_size, wait_timeout)) {
-                LOG_TRACE_L1(logger, "looped, {} task executed", tasks_run);
+                LOG_TRACE_L3(logger, "looped, {} task executed", tasks_run);
                 tasks_per_iteration += tasks_run;
             }
         }

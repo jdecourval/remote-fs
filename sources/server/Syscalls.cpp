@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <filesystem>
 
-#include "remotefs/messages/Messages.h"
 #include "remotefs/uring/IoUring.h"
 
 namespace remotefs {
@@ -81,7 +80,7 @@ void Syscalls::lookup(messages::requests::Lookup& message, int socket) {
             .entry_timeout = 1};
         response->get_storage().attr.attr.st_ino = response->get_storage().attr.ino;
         LOG_TRACE_L2(
-            logger, "Sending FuseReplyEntry req={}, ino={}", reinterpret_cast<uintptr_t>(response->get_storage().req),
+            logger, "Sending FuseReplyEntry req={}, ino={}", static_cast<void*>(response->get_storage().req),
             response->get_storage().attr.ino
         );
         uring.write_fixed(socket, std::move(response));
@@ -95,7 +94,7 @@ void Syscalls::getattr(messages::requests::GetAttr& message, int socket) {
     const auto& entry = inode_cache.inode_from_ino(message.ino);
     auto callback = uring.get_callback<messages::responses::FuseReplyAttr>([](int) {}, message.req, entry.second.stat);
     LOG_TRACE_L2(
-        logger, "Sending FuseReplyAttr req={}, ino={}", reinterpret_cast<uintptr_t>(callback->get_storage().req),
+        logger, "Sending FuseReplyAttr req={}, ino={}", static_cast<void*>(callback->get_storage().req),
         entry.second.stat.st_ino
     );
     uring.write_fixed(socket, std::move(callback));
@@ -105,142 +104,94 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
     // Probably not important to return a valid inode number
     // https://fuse-devel.narkive.com/L338RZTz/lookup-readdir-and-inode-numbers
     auto ino = message.ino;
-    auto size = message.size;
     auto off = message.offset + 1;
-    auto total_size = 0ull;
-    auto callback = uring.get_callback<messages::responses::FuseReplyBuf<>>([](int) {}, message.req);
+    auto callback = uring.get_callback<FuseReplyBuf>([](int) {}, message.req, message.size);
     LOG_TRACE_L1(
-        logger, "Received readdir for ino {} with size {} and offset {} for req {}", ino, size, off,
-        reinterpret_cast<uint64_t>(message.req)
+        logger, "Received readdir for ino {} with size {} and offset {} for req {}", ino, message.size, off,
+        static_cast<void*>(message.req)
     );
 
     const auto& root_entry = inode_cache.inode_from_ino(ino);
 
-    if (off == 1) {  // off must start at 1
-        LOG_TRACE_L3(logger, "Adding . to buffer");
-        auto free_space = callback->get_storage().free_space();
-        auto entry_size = fuse_add_direntry(
-            nullptr, reinterpret_cast<char*>(callback->get_storage().data.data() + callback->get_storage().data_size),
-            free_space, ".", &root_entry.second.stat, off
-        );
-        assert(entry_size <= callback->get_storage().data.size());
-        assert(entry_size <= free_space);
+    [&]() {
+        if (off == 1) {  // off must start at 1
+            LOG_TRACE_L3(logger, "Adding . to buffer");
+            if (!callback->get_storage().add_directory_entry(".", root_entry.second.stat, off)) {
+                return;
+            }
 
-        callback->get_storage().data_size += entry_size;
-        off++;
-        if ((total_size += entry_size) >= size) {
-            LOG_TRACE_L1(logger, "readdir responded with {} parts and size", off - message.offset - 1, total_size);
-            LOG_TRACE_L2(
-                logger, "Sending FuseReplyBuf req={}, size={}",
-                reinterpret_cast<uintptr_t>(callback->get_storage().req), callback->get_storage().data_size
-            );
-            uring.write_fixed(socket, std::move(callback));
-            return;
+            off++;
         }
-    }
 
-    if (off == 2) {
-        auto permissions = std::filesystem::status("..").permissions();
-        LOG_TRACE_L3(logger, "Adding .. to buffer");
-        auto free_space = callback->get_storage().free_space();
-        struct stat stbuf = {};
-        // Other fields are not currently used by fuse
-        stbuf.st_ino = 1;
-        stbuf.st_mode = std::to_underlying(permissions);
-        auto entry_size = fuse_add_direntry(
-            nullptr, reinterpret_cast<char*>(callback->get_storage().data.data()) + callback->get_storage().data_size,
-            free_space, "..", &stbuf, off
-        );
-        assert(entry_size <= callback->get_storage().data.size());
-        assert(entry_size <= free_space);
+        if (off == 2) {
+            LOG_TRACE_L3(logger, "Adding .. to buffer");
+            const struct stat stbuf = {
+                .st_ino = 1, .st_mode = std::to_underlying(std::filesystem::status("..").permissions())};
 
-        callback->get_storage().data_size += entry_size;
-        off++;
-        if ((total_size += entry_size) >= size) {
-            LOG_TRACE_L1(logger, "readdir responded with {} parts and size", off - message.offset - 1, total_size);
-            LOG_TRACE_L2(
-                logger, "Sending FuseReplyBuf req={}, size={}",
-                reinterpret_cast<uintptr_t>(callback->get_storage().req), callback->get_storage().data_size
-            );
-            uring.write_fixed(socket, std::move(callback));
-            return;
+            if (!callback->get_storage().add_directory_entry("..", stbuf, off)) {
+                return;
+            }
+
+            off++;
         }
-    }
 
-    for (const auto& entry : std::next(
-             std::filesystem::directory_iterator{std::filesystem::path{root_entry.first}}, std::max(0l, off - 3)
-         )) {
-        auto filename = entry.path().filename();
-        LOG_TRACE_L3(logger, "Adding {} to buffer at offset {}", filename, off);
-        auto free_space = callback->get_storage().free_space();
-        auto permissions = entry.status().permissions();
+        for (const auto& entry : std::next(
+                 std::filesystem::directory_iterator{std::filesystem::path{root_entry.first}}, std::max(0l, off - 3)
+             )) {
+            LOG_TRACE_L3(logger, "Adding {} to buffer at offset {}", entry.path().filename(), off);
 
-        struct stat stbuf {};
+            const struct stat stbuf {
+                .st_ino = 2,  // This is of course wrong
+                    .st_mode = std::to_underlying(entry.status().permissions())
+                // Other fields are not currently used by fuse
+            };
 
-        stbuf.st_ino = 2;  // This is of course wrong
-        stbuf.st_mode = std::to_underlying(permissions);
-        // fuse_req_t is ignored (1st parameter)
-        auto entry_size = fuse_add_direntry(
-            nullptr, reinterpret_cast<char*>(callback->get_storage().data.data()) + callback->get_storage().data_size,
-            free_space, filename.c_str(), &stbuf, off
-        );
-        assert(entry_size <= free_space);
-        callback->get_storage().data_size += entry_size;
-        ++off;
+            if (!callback->get_storage().add_directory_entry(entry.path(), stbuf, off)) {
+                return;
+            }
 
-        if ((total_size += entry_size) >= size) {
-            LOG_TRACE_L1(logger, "readdir responded with {} parts and size {}", off - message.offset - 1, total_size);
-            LOG_TRACE_L2(
-                logger, "Sending FuseReplyBuf req={}, size={}",
-                reinterpret_cast<uintptr_t>(callback->get_storage().req), callback->get_storage().data_size
-            );
-            uring.write_fixed(socket, std::move(callback));
-            return;
+            off++;
         }
-    }
+    }();
 
     LOG_TRACE_L2(
-        logger, "Sending FuseReplyBuf req={}, size={}", reinterpret_cast<uintptr_t>(callback->get_storage().req),
-        callback->get_storage().data_size
+        logger, "Sending FuseReplyBuf req={}, size={}", static_cast<void*>(callback->get_storage().req),
+        callback->get_storage().payload_size
     );
-    uring.write_fixed(socket, std::move(callback));
+    auto view = callback->get_storage().outer_view();
+    uring.write_fixed(socket, view, std::move(callback));
 }
 
 void Syscalls::read(messages::requests::Read& message, int socket) {
-    auto ino = message.ino;
-    auto to_read = static_cast<int>(message.size);
-    auto off = message.offset;
     LOG_TRACE_L1(
-        logger, "Received read for ino {}, with size {} and offset {}, req={}", ino, to_read, off,
-        reinterpret_cast<uintptr_t>(message.req)
+        logger, "Received read for ino {}, with size {} and offset {}, req={}", message.ino, message.size,
+        message.offset, static_cast<void*>(message.req)
     );
-    auto file_handle = inode_cache.inode_from_ino(ino).second.handle();
+    auto file_handle = inode_cache.inode_from_ino(message.ino).second.handle();
 
-    auto callable = [this, socket](
-                        int ret,
-                        std::unique_ptr<CallbackWithStorageAbstract<messages::responses::FuseReplyBuf<>>> old_callback
-                    ) {
+    auto callable = [this, socket](int ret, auto old_callback) {
         if (ret >= 0) [[likely]] {
             auto callback = uring.get_callback([](int) {}, std::move(old_callback));
-            callback->get_storage().data_size = ret;
-            LOG_TRACE_L2(
-                logger, "Sending FuseReplyBuf req={}, size={}",
-                reinterpret_cast<uintptr_t>(callback->get_storage().req), callback->get_storage().data_size
+            callback->get_storage().set_size(ret);
+            LOG_TRACE_L1(
+                logger, "Sending FuseReplyBuf req={}, inner size={}, outer size={}",
+                static_cast<void*>(callback->get_storage().req), callback->get_storage().read_view().size(),
+                callback->get_storage().outer_view().size()
             );
-            auto view = singular_bytes(callback->get_storage()).subspan(0, callback->get_storage().transmit_size());
+            auto view = callback->get_storage().outer_view();
             uring.write_fixed(socket, view, std::move(callback));
         } else {
             auto callback_error = uring.get_callback<messages::responses::FuseReplyErr>(
                 [](int) {}, old_callback->get_storage().req, -ret
             );
-            LOG_TRACE_L2(logger, "Sending FuseReplyErr");
+            LOG_TRACE_L1(logger, "Sending FuseReplyErr");
             uring.write_fixed(socket, std::move(callback_error));
         }
     };
-    auto callback = uring.get_callback<messages::responses::FuseReplyBuf<>>(std::move(callable), message.req);
-    auto buffer_view = std::span{callback->get_storage().data.begin(), narrow_cast<size_t>(to_read)};
 
-    uring.read_fixed(file_handle, buffer_view, off, std::move(callback));
+    auto callback = uring.get_callback<FuseReplyBuf>(std::move(callable), message.req, message.size);
+    auto buffer_view = callback->get_storage().write_view();
+    uring.read_fixed(file_handle, buffer_view, message.offset, std::move(callback));
 }
 
 void Syscalls::open(messages::requests::Open& message, int socket) {
@@ -252,8 +203,7 @@ void Syscalls::open(messages::requests::Open& message, int socket) {
         // Only read-only for now
         auto& inode = inode_cache.inode_from_ino(ino);
         InodeCache::open(inode);  // TODO: Handle errors
-        auto callback =
-            uring.get_callback<messages::responses::FuseReplyOpen>([](int) {}, message.req, file_info);
+        auto callback = uring.get_callback<messages::responses::FuseReplyOpen>([](int) {}, message.req, file_info);
         LOG_TRACE_L2(logger, "Sending FuseReplyOpen");
         uring.write_fixed(socket, std::move(callback));
     } else {

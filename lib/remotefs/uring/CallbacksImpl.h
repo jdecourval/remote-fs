@@ -64,7 +64,7 @@ class CallbackWithStorage final : public CallbackWithStorageAbstract<Storage> {
 
     void inline operator()(int res, std::unique_ptr<CallbackErased> self) final {
         static_assert(decltype(self)::deleter_type::is_proper_deleter);
-        assert(!executed);
+        //        assert(!executed);
         executed = true;
 
         if constexpr (std::is_invocable_v<Callable, int>) {

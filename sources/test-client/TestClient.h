@@ -5,6 +5,7 @@
 #include <thread>
 #include <vector>
 
+#include "Config.h"
 #include "remotefs/metrics/Metrics.h"
 #include "remotefs/sockets/Socket.h"
 #include "remotefs/uring/IoUring.h"
@@ -14,11 +15,13 @@ class Logger;
 }
 
 namespace remotefs::messages::both {
-template <auto MaxSize, auto Alignment>
+template <auto PingSize>
 class Ping;
 }
 
 class TestClient {
+    using Ping = remotefs::messages::both::Ping<settings::MAX_MESSAGE_SIZE>;
+
     struct ClientThread {
        public:
         struct PipelineStage {
@@ -41,7 +44,6 @@ class TestClient {
         std::vector<PipelineStage> stages;
         std::jthread thread;
         remotefs::IoUring& uring;
-        quill::Logger* logger = nullptr;
         remotefs::MetricRegistry<> metrics;
         std::chrono::high_resolution_clock::time_point start;
         std::unique_ptr<std::atomic<int>> stages_running = std::make_unique<std::atomic<int>>();
@@ -61,7 +63,6 @@ class TestClient {
     std::vector<remotefs::Socket> sockets;
     std::vector<remotefs::IoUring> urings;
     std::vector<ClientThread> threads;
-    bool shared_ring;
 };
 
 #endif  // REMOTE_FS_TESTCLIENT_H

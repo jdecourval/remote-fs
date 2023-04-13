@@ -5,6 +5,7 @@ add_executable(test-client
     Main.cpp
     TestClient.cpp
     TestClient.h
+    Config.h
     )
 
 target_link_libraries(test-client PUBLIC

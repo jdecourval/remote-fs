@@ -52,38 +52,11 @@ template <auto BufferSize>
 void Client::fuse_reply_data(
     std::unique_ptr<CallbackWithStorageAbstract<std::array<std::byte, BufferSize>>> old_callback
 ) {
-    using msg_t = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>;
-    auto &msg = *reinterpret_cast<msg_t *>(old_callback->get_storage().data());
+    auto &msg = *reinterpret_cast<FuseReplyBuf *>(old_callback->get_storage().data());
 
-    LOG_DEBUG(logger, "Received FuseReplyBuf, req={}, size={}", reinterpret_cast<uint64_t>(msg.req), msg.data_size);
-
-    auto callback = io_uring.get_callback<std::array<std::byte, BufferSize - 20>>([this, req = msg.req](int ret) {
-        LOG_TRACE_L1(logger, "Fuse callback done: {}", ret);
-        if (ret > 0) {
-            // This calls fuse_free_req without any other effect.
-            fuse_reply_none(req);
-        } else {
-            fuse_reply_err(req, -ret);
-        };
-    });
-
-    struct FuseResponse {
-        fuse_out_header headers;
-        char buffer[];
-    };
-
-    assert(sizeof(FuseResponse) + msg.data_size <= callback->get_storage().size());
-
-    auto *response = reinterpret_cast<FuseResponse *>(callback->get_storage().data());
-    response->headers = fuse_out_header{
-        .len = narrow_cast<decltype(fuse_out_header::len)>(sizeof(fuse_out_header) + msg.data_size),
-        .error = 0,
-        // TODO: Remove this horrible hack. This is because I don't have fuse_req_t definition.
-        .unique = reinterpret_cast<const uint64_t *>(msg.req)[1]};
-    // TODO: Remove copy
-    std::memcpy(response->buffer, msg.data.data(), msg.data_size);
-    auto buffer_view = std::span{callback->get_storage().begin(), response->headers.len};
-    io_uring.write(fuse_fd, buffer_view, std::move(callback));
+    LOG_DEBUG(logger, "Received FuseReplyBuf, req={}, size={}", static_cast<void *>(msg.req), msg.payload_size);
+    [[maybe_unused]] auto ret = fuse_reply_buf(msg.req, msg.read_view().data(), msg.read_view().size());
+    assert(ret == 0);
 }
 
 template <auto BufferSize>
@@ -110,7 +83,7 @@ void Client::read_callback(
                 reinterpret_cast<const messages::responses::FuseReplyEntry *>(old_callback->get_storage().data());
             LOG_DEBUG(
                 logger, "Received FuseReplyEntry, ino={}, req={}, fd={}, size={}", msg->attr.ino,
-                reinterpret_cast<uint64_t>(msg->req), msg->req->ch->fd, msg->attr.attr.st_size
+                static_cast<void *>(msg->req), msg->req->ch->fd, msg->attr.attr.st_size
             );
 
             if (auto ret = fuse_reply_entry(msg->req, &msg->attr); ret < 0) {
@@ -122,7 +95,7 @@ void Client::read_callback(
             auto &msg =
                 *reinterpret_cast<const messages::responses::FuseReplyAttr *>(old_callback->get_storage().data());
             LOG_DEBUG(
-                logger, "Received FuseReplyAttr, req={}, fd={}, fd={}", reinterpret_cast<uint64_t>(msg.req), fuse_fd,
+                logger, "Received FuseReplyAttr, req={}, fd={}, fd={}", static_cast<void *>(msg.req), fuse_fd,
                 msg.req->ch->fd
             );
             if (auto ret = fuse_reply_attr(msg.req, &msg.attr, 1.0); ret < 0) {
@@ -134,7 +107,7 @@ void Client::read_callback(
             auto &msg =
                 *reinterpret_cast<const messages::responses::FuseReplyOpen *>(old_callback->get_storage().data());
 
-            LOG_DEBUG(logger, "Received FuseReplyOpen, req={}", reinterpret_cast<uint64_t>(msg.req));
+            LOG_DEBUG(logger, "Received FuseReplyOpen, req={}", static_cast<void *>(msg.req));
             if (auto ret = fuse_reply_open(msg.req, &msg.file_info); ret < 0) {
                 throw std::system_error(-ret, std::generic_category(), "fuse_reply_open failure");
             }
@@ -148,8 +121,7 @@ void Client::read_callback(
             auto &msg =
                 *reinterpret_cast<const messages::responses::FuseReplyErr *>(old_callback->get_storage().data());
             LOG_WARNING(
-                logger, "Received error for req {}: {}", reinterpret_cast<uint64_t>(msg.req),
-                std::strerror(msg.error_code)
+                logger, "Received error for req {}: {}", static_cast<void *>(msg.req), std::strerror(msg.error_code)
             );
             if (auto ret = fuse_reply_err(msg.req, msg.error_code); ret < 0) {
                 throw std::system_error(-ret, std::generic_category(), "fuse_reply_err failure");
@@ -251,15 +223,14 @@ void Client::common_init(int argc, char *argv[]) {
             [](void *, struct fuse_conn_info *conn) {
                 conn->max_background = std::numeric_limits<decltype(conn->max_background)>::max();
                 conn->max_readahead = std::numeric_limits<decltype(conn->max_readahead)>::max();
-                conn->max_read = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::MAX_PAYLOAD_SIZE;
-                conn->max_write = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::MAX_PAYLOAD_SIZE;
+                conn->max_read = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::max_payload_size();
+                conn->max_write = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::max_payload_size();
+                ;
             },
         .lookup =
             [](fuse_req_t req, fuse_ino_t parent, const char *name) {
                 auto &client = *Client::self;
-                LOG_TRACE_L1(
-                    client.logger, "Sending lookup for {}/{}, req={}", parent, name, reinterpret_cast<uintptr_t>(req)
-                );
+                LOG_TRACE_L1(client.logger, "Sending lookup for {}/{}, req={}", parent, name, static_cast<void *>(req));
                 auto callback = client.io_uring.get_callback<messages::requests::Lookup>([](int) {});
                 callback->get_storage().tag = std::byte{2};
                 callback->get_storage().ino = parent;
@@ -272,9 +243,7 @@ void Client::common_init(int argc, char *argv[]) {
             [](fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *) {
                 auto &client = *Client::self;
 
-                LOG_TRACE_L1(
-                    client.logger, "Sending getattr, req={}, fd={}", reinterpret_cast<uintptr_t>(req), client.fuse_fd
-                );
+                LOG_TRACE_L1(client.logger, "Sending getattr, req={}, fd={}", static_cast<void *>(req), client.fuse_fd);
                 auto callback = client.io_uring.get_callback<messages::requests::GetAttr>([](int) {});
                 callback->get_storage().req = req;
                 callback->get_storage().ino = ino;
@@ -284,7 +253,7 @@ void Client::common_init(int argc, char *argv[]) {
         .open =
             [](fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
                 auto &client = *Client::self;
-                LOG_TRACE_L1(client.logger, "Sending open, req={}", reinterpret_cast<uintptr_t>(req));
+                LOG_TRACE_L1(client.logger, "Sending open, req={}", static_cast<void *>(req));
                 auto callback = client.io_uring.get_callback<messages::requests::Open>([](int) {});
                 callback->get_storage().req = req;
                 callback->get_storage().ino = ino;
@@ -296,7 +265,7 @@ void Client::common_init(int argc, char *argv[]) {
             [](fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *) {
                 auto &client = *Client::self;
                 LOG_TRACE_L1(
-                    client.logger, "Sending read for {} of size {}, req={}", ino, size, reinterpret_cast<uintptr_t>(req)
+                    client.logger, "Sending read for {} of size {}, req={}", ino, size, static_cast<void *>(req)
                 );
                 auto callback = client.io_uring.get_callback<messages::requests::Read>([](int) {});
                 callback->get_storage().req = req;
@@ -321,7 +290,7 @@ void Client::common_init(int argc, char *argv[]) {
                 auto &client = *Client::self;
                 LOG_TRACE_L1(
                     client.logger, "Sending readdir for {} with off {} and size {}, req=", ino, off, size,
-                    reinterpret_cast<uint64_t>(req)
+                    static_cast<void *>(req)
                 );
                 auto callback = client.io_uring.get_callback<messages::requests::ReadDir>([](int) {});
                 callback->get_storage().req = req;

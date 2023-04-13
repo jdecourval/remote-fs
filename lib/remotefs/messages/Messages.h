@@ -1,4 +1,5 @@
 #pragma clang diagnostic push
+#pragma ide diagnostic ignored "cppcoreguidelines-avoid-c-arrays"
 #pragma ide diagnostic ignored "cppcoreguidelines-pro-type-member-init"
 #pragma ide diagnostic ignored "cppcoreguidelines-avoid-const-or-ref-data-members"
 #ifndef REMOTE_FS_MESSAGES_H
@@ -10,19 +11,25 @@
 #include <array>
 #include <cassert>
 #include <climits>
+#include <filesystem>
 #include <span>
 
 #include "remotefs/tools/Bytes.h"
+#include "remotefs/tools/Casts.h"
 
 namespace remotefs::messages {
 namespace both {
 
-template <auto MaxPaddingSize = 0, auto Alignment = 1>
+template <auto PingSize>
 class Ping {
-    [[maybe_unused]] const std::byte tag = std::byte{7};  // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
-    size_t runtime_size;
-    // Increasing the alignment is only useful if the user wish to store a structure inside padding.
-    [[maybe_unused]] alignas(Alignment) std::array<std::byte, MaxPaddingSize> padding;
+    union {
+        struct {
+            [[maybe_unused]] const std::byte tag = std::byte{7};
+            size_t runtime_size;
+        };
+
+        std::array<std::byte, PingSize> _padding;
+    };
 
    public:
     [[nodiscard]] size_t size() const {
@@ -39,7 +46,8 @@ class Ping {
 
     explicit Ping(size_t runtime_size)
         : runtime_size{runtime_size} {
-        assert(runtime_size <= padding.size());
+        static_assert(sizeof(Ping) == PingSize);
+        assert(runtime_size <= _padding.size());
     }
 };
 }  // namespace both
@@ -128,46 +136,71 @@ struct FuseReplyOpen {
     fuse_file_info file_info;
 };
 
-#pragma clang diagnostic push
-#pragma ide diagnostic ignored "cppcoreguidelines-pro-type-member-init"
-
-template <size_t max_size = 65017>
+template <size_t FuseReplyBufSize>
 struct FuseReplyBuf {
-    explicit FuseReplyBuf(auto r)
-        : req{r} {}
-
-    FuseReplyBuf(auto r, auto d)
-        : req{r},
-          data_size{d} {}
-
-    const std::byte tag = std::byte{4};
-    int data_size{};
-    fuse_req_t req;
-    // TODO: This is wrong, as it ignores padding
-    // TODO: 8 for vtable: remove! 20=hack for missing paddings
-    static constexpr int MAX_PAYLOAD_SIZE = max_size - sizeof(tag) - sizeof(data_size) - 8 - 20;
-    static_assert(MAX_PAYLOAD_SIZE > 0);
-    std::array<std::byte, MAX_PAYLOAD_SIZE> data;
-
-    [[nodiscard]] int free_space() const {
-        return MAX_PAYLOAD_SIZE - data_size;
+    explicit FuseReplyBuf(auto r, size_t size = max_payload_size())
+        : free_space{narrow_cast<decltype(free_space)>(size)},
+          req{r} {
+        static_assert(sizeof(FuseReplyBuf) == FuseReplyBufSize);
+        assert(free_space <= narrow_cast<long>(max_payload_size()));
     }
 
-    [[nodiscard]] size_t transmit_size() const {
-        return reinterpret_cast<const std::byte*>(&data) - reinterpret_cast<const std::byte*>(this) + data_size;
+    union {
+        struct {
+            [[maybe_unused]] const std::byte tag = std::byte{4};
+            int payload_size = 0;
+            int free_space;  // TODO: Do not transfer over the network.
+            fuse_req_t req;
+            std::byte payload[];
+        };
+
+        std::array<std::byte, FuseReplyBufSize> _padding;
+    };
+
+    void set_size(int size) {
+        payload_size = size;
+        free_space = 0;
     }
 
-    static_assert(MAX_PAYLOAD_SIZE > 0);
+    std::span<char> read_view() {
+        return {reinterpret_cast<char*>(payload), narrow_cast<size_t>(payload_size)};
+    }
+
+    std::span<std::byte> write_view() {
+        return {reinterpret_cast<std::byte*>(payload + payload_size), narrow_cast<size_t>(free_space)};
+    }
+
+    std::span<std::byte> outer_view() {
+        return singular_bytes(*this).subspan(0, offsetof(FuseReplyBuf, payload) + payload_size);
+    }
+
+    bool add_directory_entry(const std::filesystem::path& path, const struct stat& stats, off_t offset) {
+        auto view = write_view();
+
+        // fuse_req_t is ignored (1st parameter)
+        auto entry_size = fuse_add_direntry(
+            nullptr, reinterpret_cast<char*>(view.data()), view.size(), path.filename().c_str(), &stats, offset
+        );
+        if (entry_size <= narrow_cast<size_t>(free_space)) {
+            payload_size += entry_size;
+            free_space -= entry_size;
+            return true;
+        }
+
+        return false;
+    }
+
+    static constexpr size_t max_payload_size() {
+        return sizeof(FuseReplyBuf) - offsetof(FuseReplyBuf, payload);
+    }
 };
-
-#pragma clang diagnostic pop
 
 struct FuseReplyErr {
     FuseReplyErr(fuse_req_t r, int e)
         : req(r),
           error_code(e) {}
 
-    const std::byte tag = std::byte{5};
+    [[maybe_unused]] const std::byte tag = std::byte{5};
     fuse_req_t req;
     int error_code;
 };

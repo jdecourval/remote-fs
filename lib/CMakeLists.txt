@@ -30,6 +30,7 @@ target_include_directories(remotefs
 
 target_compile_options(remotefs PUBLIC
     -Wno-pedantic  # Flexible array members
+    -Wno-gnu-variable-sized-type-not-at-end  # False positive because the struct containing the FAM is actually properly sized thanks to a manual pad.
     )
 
 target_link_libraries(remotefs PUBLIC
