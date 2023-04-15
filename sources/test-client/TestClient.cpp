@@ -46,22 +46,6 @@ TestClient::TestClient(
 void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) const {
     //    LOG_INFO(quill::get_logger(), "Scheduling");
 
-    {
-        auto write_callable = [](int) {};
-
-        // TODO: This doesn't exactly work because the size of Ping affects callable's placement in CallbackEmpty.
-        //  This could be fixed by moving callable before storage in CallbackEmpty, but this hsa other consequences
-        //  Alternatively, this could be solved an iterative constexpr function.
-        //        constexpr auto max_write_payload_size =
-        auto write_callback = uring.get_callback<Ping>(std::move(write_callable), chunk_size - 100);
-
-        static_assert(sizeof(*write_callback) <= remotefs::buffers_size);
-        //    static_assert(sizeof(*callback) == remotefs::IoUring::buffers_size);
-
-        auto view = write_callback->get_storage().view();
-        uring.write_fixed(socket, view, std::move(write_callback));
-    }
-
     auto read_callable = [this, max_size_thread](int32_t syscall_ret) mutable {
         if (measure_latency) {
             latency += std::chrono::high_resolution_clock::now() - start_time;
@@ -75,14 +59,20 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
             read_write(max_size_thread);
         } else {
             stages_running--;
-        };
+        }
     };
 
-    auto read_callback = uring.get_callback<Ping>(std::move(read_callable), chunk_size - 100);
-    static_assert(sizeof(*read_callback) <= remotefs::buffers_size);
+    using Ping = remotefs::messages::both::Ping<remotefs::IoUring::MaxPayloadForCallback<decltype(read_callable)>()>;
 
+    {
+        auto write_callback = uring.get_callback<Ping>([](int) {}, chunk_size);
+        auto view = write_callback->get_storage().view();
+        uring.write_fixed(socket, view, std::move(write_callback));
+    }
+
+    auto read_callback = uring.get_callback<Ping>(std::move(read_callable), chunk_size);
     auto view = read_callback->get_storage().view();
-    uring.read_fixed(socket, view, 0, std::move(read_callback));
+    uring.read(socket, view, 0, std::move(read_callback));
 }
 
 void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout, long max_size, bool register_ring) {

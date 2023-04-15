@@ -16,7 +16,6 @@ namespace remotefs {
 class IoUring;
 
 class Syscalls {
-    using FuseReplyBuf = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>;
 
    public:
     explicit Syscalls(IoUring& ring);

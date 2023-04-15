@@ -18,6 +18,11 @@ auto singular_bytes(T& t) {
     return std::as_writable_bytes(singular_span(t));
 }
 
+template <std::unsigned_integral T>
+inline constexpr auto mask_out(T value, unsigned mask) {
+    return value & (std::numeric_limits<T>::max() ^ mask);
+}
+
 // From https://stackoverflow.com/a/72128846
 
 #endif  // REMOTE_FS_BYTES_H

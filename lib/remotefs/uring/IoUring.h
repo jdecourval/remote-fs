@@ -34,9 +34,15 @@ class IoUring {
     static constexpr auto max_wait_min_batch_size = 16;  // Compile time limit
 
     template <typename Callable>
-    static inline constexpr auto MAX_CALLBACK_PAYLOAD_SIZE =
-        2UL * buffers_size - sizeof(Callable) -
-        sizeof(details::CallbackWithStorage<Callable, std::array<std::byte, buffers_size - sizeof(Callable)>>);
+    static inline constexpr size_t MaxPayloadForCallback() {
+        using Tentative =
+            details::CallbackWithStorage<Callable, std::array<std::byte, buffers_size - sizeof(Callable)>>;
+        constexpr auto padding = sizeof(Tentative) - buffers_size;
+        constexpr auto payload_size = buffers_size - sizeof(Callable) - padding;
+        using Final = details::CallbackWithStorage<Callable, std::array<std::byte, payload_size>>;
+        static_assert(sizeof(Final) == buffers_size);
+        return payload_size;
+    }
 
     template <class T>
     static std::pmr::polymorphic_allocator<T> get_allocator() {
@@ -184,7 +190,7 @@ template <typename Callable>
 void IoUring::read_fixed(int fd, size_t offset, Callable&& callable) {
     assert(fd >= 0);
     auto callback =
-        get_callback<std::array<std::byte, MAX_CALLBACK_PAYLOAD_SIZE<Callable>>>(std::forward<Callable>(callable));
+        get_callback<std::array<std::byte, MaxPayloadForCallback<Callable>()>>(std::forward<Callable>(callable));
     auto index = callback->get_index();
     auto view = singular_bytes(callback->get_storage());
     auto* sqe = get_sqe(std::move(callback));

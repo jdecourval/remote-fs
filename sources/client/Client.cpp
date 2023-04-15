@@ -156,7 +156,12 @@ void Client::fuse_callback(
 }
 
 void Client::start(const std::string &address) {
-    socket = remotefs::Socket::connect(address, 6512);
+    socket = remotefs::Socket::connect(
+        address, 6512,
+        {.rx_buffer_size = 10 * settings::MAX_MESSAGE_SIZE,
+         .tx_buffer_size = 10 * settings::MAX_MESSAGE_SIZE,
+         .delivery_point = settings::MAX_MESSAGE_SIZE}
+    );
     //    io_uring.assign_file((socket_uring_idx = 1), socket);
 
     for (auto i = 0; i < 1; i++) {
@@ -223,9 +228,8 @@ void Client::common_init(int argc, char *argv[]) {
             [](void *, struct fuse_conn_info *conn) {
                 conn->max_background = std::numeric_limits<decltype(conn->max_background)>::max();
                 conn->max_readahead = std::numeric_limits<decltype(conn->max_readahead)>::max();
-                conn->max_read = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::max_payload_size();
-                conn->max_write = messages::responses::FuseReplyBuf<settings::MAX_MESSAGE_SIZE>::max_payload_size();
-                ;
+                conn->max_read = FUSE_MAX_MAX_PAGES * PAGE_SIZE;
+                conn->max_write = FUSE_MAX_MAX_PAGES * PAGE_SIZE;
             },
         .lookup =
             [](fuse_req_t req, fuse_ino_t parent, const char *name) {

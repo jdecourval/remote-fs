@@ -105,7 +105,11 @@ void Syscalls::readdir(messages::requests::ReadDir& message, int socket) {
     // https://fuse-devel.narkive.com/L338RZTz/lookup-readdir-and-inode-numbers
     auto ino = message.ino;
     auto off = message.offset + 1;
-    auto callback = uring.get_callback<FuseReplyBuf>([](int) {}, message.req, message.size);
+    auto callable = [](int) {};
+    auto callback =
+        uring.get_callback<messages::responses::FuseReplyBuf<IoUring::MaxPayloadForCallback<decltype(callable)>()>>(
+            std::move(callable), message.req, message.size
+        );
     LOG_TRACE_L1(
         logger, "Received readdir for ino {} with size {} and offset {} for req {}", ino, message.size, off,
         static_cast<void*>(message.req)
@@ -189,7 +193,10 @@ void Syscalls::read(messages::requests::Read& message, int socket) {
         }
     };
 
-    auto callback = uring.get_callback<FuseReplyBuf>(std::move(callable), message.req, message.size);
+    auto callback = uring.get_callback<
+        messages::responses::FuseReplyBuf<IoUring::MaxPayloadForCallback<decltype([this, socket](int) {})>()>>(
+        std::move(callable), message.req, message.size
+    );
     auto buffer_view = callback->get_storage().write_view();
     uring.read_fixed(file_handle, buffer_view, message.offset, std::move(callback));
 }

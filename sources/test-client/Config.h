@@ -7,6 +7,6 @@ const constexpr auto DISABLE_METRICS = true;
 #else
 const constexpr auto DISABLE_METRICS = false;
 #endif
-const constexpr auto MAX_MESSAGE_SIZE = 65536;
+const constexpr auto MAX_MESSAGE_SIZE = 2097152;
 }  // namespace settings
 #endif

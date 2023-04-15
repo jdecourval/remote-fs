@@ -50,7 +50,7 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
 
     parser.add_argument("-c", "--chunk-size")
         .help("Deliver data to the application in chunk this big.")
-        .default_value(65475 - 20)
+        .default_value(settings::MAX_MESSAGE_SIZE)
         .scan<'d', int>();
     parser.add_argument("--fragment-size")
         .help("Fragment chunks on the network to at most this big (bytes). Default to the PMTU.")
@@ -65,11 +65,11 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
         .default_value(false);
     parser.add_argument("-r", "--rx-buffer-size")
         .help("How big the socket's RX buffer is.")
-        .default_value(1024 * 1024l)
+        .default_value(10 * settings::MAX_MESSAGE_SIZE)
         .scan<'d', long>();
     parser.add_argument("-s", "--tx-buffer-size")
         .help("How big the socket's TX buffer is.")
-        .default_value(1024 * 1024l)
+        .default_value(10 * settings::MAX_MESSAGE_SIZE)
         .scan<'d', long>();
     parser.add_argument("-R", "--share-ring")
         .help("Share io uring between all threads.")

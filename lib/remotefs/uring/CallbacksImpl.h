@@ -50,8 +50,6 @@ class CallbackWithStorage final : public CallbackWithStorageAbstract<Storage> {
     }
 
     void inline operator()(int res) final {
-        assert(!executed);
-        executed = true;
         if constexpr (std::is_invocable_v<Callable, int>) {
             callable(res);
         } else if constexpr (std::is_invocable_v<
@@ -64,9 +62,6 @@ class CallbackWithStorage final : public CallbackWithStorageAbstract<Storage> {
 
     void inline operator()(int res, std::unique_ptr<CallbackErased> self) final {
         static_assert(decltype(self)::deleter_type::is_proper_deleter);
-        //        assert(!executed);
-        executed = true;
-
         if constexpr (std::is_invocable_v<Callable, int>) {
             callable(res);
         } else if constexpr (std::is_invocable_v<
@@ -86,7 +81,6 @@ class CallbackWithStorage final : public CallbackWithStorageAbstract<Storage> {
    public:
     alignas(buffers_alignment) alignas(Storage) Storage storage;
     Callable callable;
-    bool executed = false;
 };
 
 class CallbackWithAttachedStorageInterface {};
@@ -119,8 +113,6 @@ class CallbackWithAttachedStorage final : public CallbackWithStorageAbstract<Sto
 
    private:
     void inline operator()(int res) final {
-        assert(!executed);
-        executed = true;
         if constexpr (std::is_invocable_v<Callable, int>) {
             callable(res);
         } else if constexpr (std::is_invocable_v<
@@ -133,9 +125,6 @@ class CallbackWithAttachedStorage final : public CallbackWithStorageAbstract<Sto
 
     void inline operator()(int res, [[maybe_unused]] std::unique_ptr<CallbackErased> self) final {
         static_assert(decltype(self)::deleter_type::is_proper_deleter);
-        assert(!executed);
-        executed = true;
-
         if constexpr (std::is_invocable_v<Callable, int>) {
             attached.reset();
             callable(res);
@@ -151,7 +140,6 @@ class CallbackWithAttachedStorage final : public CallbackWithStorageAbstract<Sto
    public:
     Callable callable;
     std::unique_ptr<CallbackWithStorageAbstract<Storage>> attached;
-    bool executed = false;
 };
 
 template <typename Storage>

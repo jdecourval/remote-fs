@@ -39,15 +39,15 @@ int main(int argc, char* argv[]) {
     // Socket options
     program.add_argument("-r", "--rx-buffer-size")
         .help("How big the socket's RX buffer is.")
-        .default_value(1024 * 1024l)
+        .default_value(10l * remotefs::settings::MAX_MESSAGE_SIZE)
         .scan<'d', long>();
     program.add_argument("-s", "--tx-buffer-size")
         .help("How big the socket's TX buffer is.")
-        .default_value(1024 * 1024l)
+        .default_value(10l * remotefs::settings::MAX_MESSAGE_SIZE)
         .scan<'d', long>();
     program.add_argument("-c", "--chunk-size")
         .help("Deliver data to the application in chunk this big.")
-        .default_value(65475 - 20)
+        .default_value(remotefs::settings::MAX_MESSAGE_SIZE)
         .scan<'d', int>();
     program.add_argument("--fragment-size")
         .help("Fragment chunks on the network to at most this big (bytes). Default to the PMTU.")

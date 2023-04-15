@@ -26,9 +26,10 @@ class Ping {
         struct {
             [[maybe_unused]] const std::byte tag = std::byte{7};
             size_t runtime_size;
+            char payload[];
         };
 
-        std::array<std::byte, PingSize> _padding;
+        std::array<std::byte, mask_out(PingSize, 0b1111)> _padding;
     };
 
    public:
@@ -44,10 +45,11 @@ class Ping {
         return {reinterpret_cast<std::byte*>(this), size()};
     }
 
-    explicit Ping(size_t runtime_size)
+    explicit Ping(size_t runtime_size = sizeof(Ping))
         : runtime_size{runtime_size} {
-        static_assert(sizeof(Ping) == PingSize);
-        assert(runtime_size <= _padding.size());
+        static_assert(sizeof(Ping) <= PingSize);
+        assert(runtime_size <= sizeof(*this));
+        assert(runtime_size >= offsetof(Ping, payload));
     }
 };
 }  // namespace both
@@ -141,7 +143,7 @@ struct FuseReplyBuf {
     explicit FuseReplyBuf(auto r, size_t size = max_payload_size())
         : free_space{narrow_cast<decltype(free_space)>(size)},
           req{r} {
-        static_assert(sizeof(FuseReplyBuf) == FuseReplyBufSize);
+        static_assert(sizeof(FuseReplyBuf) <= FuseReplyBufSize);
         assert(free_space <= narrow_cast<long>(max_payload_size()));
     }
 
@@ -154,7 +156,7 @@ struct FuseReplyBuf {
             std::byte payload[];
         };
 
-        std::array<std::byte, FuseReplyBufSize> _padding;
+        std::array<std::byte, mask_out(FuseReplyBufSize, 0b1111)> _padding;
     };
 
     void set_size(int size) {

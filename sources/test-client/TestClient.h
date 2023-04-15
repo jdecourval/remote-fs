@@ -20,8 +20,6 @@ class Ping;
 }
 
 class TestClient {
-    using Ping = remotefs::messages::both::Ping<settings::MAX_MESSAGE_SIZE>;
-
     struct ClientThread {
        public:
         struct PipelineStage {

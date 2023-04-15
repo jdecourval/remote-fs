@@ -10,7 +10,7 @@ namespace remotefs {
 class IoUring;
 
 static constexpr auto buffers_alignment = 8;
-static constexpr auto buffers_size = 1052792;
+static constexpr auto buffers_size = 2097152;
 
 CachedRegisteredBuffersResource<buffers_size>& get_pool();
 
@@ -21,11 +21,9 @@ class CallbackErased {
     CallbackErased& operator=(const CallbackErased& copyFrom) = delete;
     CallbackErased(CallbackErased&&) = delete;
     CallbackErased& operator=(CallbackErased&&) = delete;
-    int id;
 
    protected:
-    CallbackErased()
-        : id(std::rand()) {}
+    CallbackErased() = default;
 
    private:
     friend IoUring;
