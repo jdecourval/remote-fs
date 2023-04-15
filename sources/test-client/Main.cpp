@@ -136,6 +136,14 @@ int main(int argc, char* argv[]) {
 
     configure_argument_parser(program);
 
+    try {
+        program.parse_args(argc, argv);
+    } catch (const std::runtime_error& err) {
+        std::cerr << err.what() << std::endl;
+        std::cerr << program;
+        std::exit(1);
+    }
+
     switch (verbosity) {
         case 0:
             logger->set_log_level(quill::LogLevel::Info);
@@ -152,14 +160,6 @@ int main(int argc, char* argv[]) {
         default:
             logger->set_log_level(quill::LogLevel::TraceL3);
             break;
-    }
-
-    try {
-        program.parse_args(argc, argv);
-    } catch (const std::runtime_error& err) {
-        std::cerr << err.what() << std::endl;
-        std::cerr << program;
-        std::exit(1);
     }
 
     if (program.get<std::uint16_t>("--streams") != 1) {
