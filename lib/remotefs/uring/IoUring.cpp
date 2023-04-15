@@ -3,9 +3,7 @@
 #include <cassert>
 #include <iostream>
 
-namespace {
-std::unique_ptr<remotefs::CachedRegisteredBuffersResource<remotefs::buffers_size>> pool_static = nullptr;
-}
+thread_local remotefs::CachedRegisteredBuffersResource<remotefs::buffers_size> pool_per_thread{};
 
 namespace remotefs {
 
@@ -19,8 +17,8 @@ IoUring::IoUring(int queue_depth, int registered_buffers) {
         register_sparse_buffers(registered_buffers);
     }
 
-    pool_static = std::make_unique<CachedRegisteredBuffersResource<buffers_size>>(registered_buffers);
-    for (auto&& [idx, buffer] : pool_static->view()) {
+    pool_per_thread = remotefs::CachedRegisteredBuffersResource<remotefs::buffers_size>{registered_buffers};
+    for (auto&& [idx, buffer] : pool_per_thread.view()) {
         assign_buffer(idx, buffer);
     }
 }
@@ -119,8 +117,7 @@ void IoUring::assign_file(int idx, int file) {
 }
 
 CachedRegisteredBuffersResource<buffers_size>& get_pool() {
-    assert(pool_static);
-    return *pool_static;
+    return pool_per_thread;
 }
 
 io_uring_sqe* IoUring::get_sqe(std::unique_ptr<CallbackErased> callable) {
