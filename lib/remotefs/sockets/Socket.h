@@ -15,7 +15,7 @@ struct Options {
     std::uint16_t max_streams = 64;
     bool ordered = false;
     bool nodelay = true;
-    bool nofragment = false;
+    bool nofragment = true;
 };
 }  // namespace detail
 
