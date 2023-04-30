@@ -84,6 +84,9 @@ Socket Socket::listen(const std::string& address, int port, const Options& optio
     if (setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
         throw std::system_error(errno, std::system_category(), "Failed to set REUSEADDR");
     }
+    if (setsockopt(socket, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) < 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to set REUSEPORT");
+    }
 
     socket.configure(options);
 

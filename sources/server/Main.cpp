@@ -146,19 +146,21 @@ int main(int argc, char* argv[]) {
                                                     !program.get<bool>("--nagle"),
                                                     program.get<bool>("--disable-fragment")};
 
-    auto server = remotefs::Server(
-        program.get("address"), program.get<int>("port"), socket_options, program.get<bool>("--metrics"),
-        program.get<int>("--ring-depth"), program.get<int>("--register-buffers")
-    );
-
     LOG_DEBUG(logger, "Ready to start");
     if (program.get<int>("--threads") > 1) {
         auto threads = std::vector<std::jthread>{};
         for (auto i = 0; i < program.get<int>("--threads"); i++) {
             threads.emplace_back([&] {
-                server.start(program.get<int>("--pipeline"), program.get<int>("--min-batch"),
-                             std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
-                             program.get<bool>("--register-ring"));
+                auto server = remotefs::Server(
+                    program.get("address"), program.get<int>("port"), socket_options, program.get<bool>("--metrics"),
+                    program.get<int>("--ring-depth"), program.get<int>("--register-buffers")
+                );
+
+                server.start(
+                    program.get<int>("--pipeline"), program.get<int>("--min-batch"),
+                    std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
+                    program.get<bool>("--register-ring")
+                );
             });
         }
 
@@ -167,9 +169,15 @@ int main(int argc, char* argv[]) {
             thread.join();
         }
     } else {
-        server.start(program.get<int>("--pipeline"), program.get<int>("--min-batch"),
-                     std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
-                     program.get<bool>("--register-ring"));
+        auto server = remotefs::Server(
+            program.get("address"), program.get<int>("port"), socket_options, program.get<bool>("--metrics"),
+            program.get<int>("--ring-depth"), program.get<int>("--register-buffers")
+        );
+
+        server.start(
+            program.get<int>("--pipeline"), program.get<int>("--min-batch"),
+            std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")}, program.get<bool>("--register-ring")
+        );
     }
 
     LOG_DEBUG(logger, "Cleanly exited");
