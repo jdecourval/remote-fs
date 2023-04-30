@@ -65,11 +65,11 @@ void configure_argument_parser(argparse::ArgumentParser& parser) {
         .default_value(false);
     parser.add_argument("-r", "--rx-buffer-size")
         .help("How big the socket's RX buffer is.")
-        .default_value(10 * settings::MAX_MESSAGE_SIZE)
+        .default_value(10l * settings::MAX_MESSAGE_SIZE)
         .scan<'d', long>();
     parser.add_argument("-s", "--tx-buffer-size")
         .help("How big the socket's TX buffer is.")
-        .default_value(10 * settings::MAX_MESSAGE_SIZE)
+        .default_value(10l * settings::MAX_MESSAGE_SIZE)
         .scan<'d', long>();
     parser.add_argument("-R", "--share-ring")
         .help("Share io uring between all threads.")
