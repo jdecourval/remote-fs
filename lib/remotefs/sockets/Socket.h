@@ -2,6 +2,7 @@
 #define REMOTE_FS_SOCKET_H
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 

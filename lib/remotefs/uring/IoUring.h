@@ -56,6 +56,8 @@ class IoUring {
     IoUring& operator=(const IoUring& source) = delete;
     ~IoUring();
 
+    void start();
+
     // Careful, path must remain alive until the ring is submitted.
     void queue_statx(int dir_fd, std::string_view path, struct statx* result, std::unique_ptr<CallbackErased> callback);
 
@@ -168,6 +170,7 @@ class IoUring {
 
     io_uring ring{};
     std::forward_list<std::unique_ptr<CallbackErased>> to_clean_on_submit;
+    int registered_buffers;
 };
 
 template <typename Storage>

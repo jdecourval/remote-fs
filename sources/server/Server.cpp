@@ -25,27 +25,44 @@ void signal_term_handler(int signal) {
 }
 }
 
+namespace {}
+
 Server::Server(
     const std::string& address, int port, const Socket::Options& socket_options, bool metrics_on_stop, int ring_depth,
-    int max_registered_buffers, int max_clients
+    int max_registered_buffers, int thread_n
 )
-    : socket{},
+    : inode_cache{},
+      threads{},
       logger{quill::get_logger()},
-      metric_registry{},
-      io_uring{ring_depth, max_registered_buffers},
-      syscalls{io_uring},
       _metrics_on_stop{metrics_on_stop} {
     std::signal(SIGUSR1, signal_usr1_handler);
     std::signal(SIGTERM, signal_term_handler);
     std::signal(SIGPIPE, SIG_IGN);
 
-    io_uring.register_sparse_files(max_clients);
-
-    LOG_INFO(logger, "Binding to {}", address);
-    socket = remotefs::Socket::listen(address, port, socket_options);
+    for (auto i = 0; i < thread_n; i++) {
+        LOG_INFO(logger, "Binding a new thread to {}", address);
+        threads.emplace_back(
+            IoUring{ring_depth, max_registered_buffers}, remotefs::Socket::listen(address, port, socket_options),
+            inode_cache
+        );
+    }
 }
 
-void Server::accept_callback(int client_socket, int pipeline) {
+void Server::start(
+    int pipeline, int min_batch_size, std::chrono::nanoseconds wait_timeout, int max_clients, bool register_ring
+) {
+    for (auto& thread : threads) {
+        thread.start(pipeline, min_batch_size, wait_timeout, max_clients, register_ring);
+    }
+}
+
+void Server::join() {
+    for (auto& thread : threads) {
+        thread.join();
+    }
+}
+
+void Server::ServerThread::accept_callback(int client_socket, int pipeline) {
     if (client_socket >= 0) {
         LOG_INFO(logger, "Accepted a connection");
         for (auto i = 0; i < pipeline; i++) {
@@ -62,7 +79,7 @@ void Server::accept_callback(int client_socket, int pipeline) {
 }
 
 template <auto MaxBufferSize>
-void Server::read_callback(
+void Server::ServerThread::read_callback(
     int syscall_ret, Socket client_socket,
     std::unique_ptr<CallbackWithStorageAbstract<std::array<std::byte, MaxBufferSize>>> old_callback
 ) {
@@ -74,7 +91,7 @@ void Server::read_callback(
             return;
         }
 
-        LOG_ERROR(logger, "Read failed, retrying: {}", std::strerror(-syscall_ret));
+        LOG_ERROR(logger, "Read failed ({}), retrying: {}", client_socket_int, std::strerror(-syscall_ret));
         io_uring.read_fixed(
             client_socket_int, 0,
             [this, client_socket = std::move(client_socket)](int syscall_ret, auto callback) mutable {
@@ -156,50 +173,60 @@ void Server::read_callback(
     );
 }
 
-void Server::start(int pipeline, int min_batch_size, std::chrono::nanoseconds wait_timeout, bool register_ring) {
-    std::signal(SIGPIPE, SIG_IGN);
+void Server::ServerThread::start(
+    int pipeline, int min_batch_size, std::chrono::nanoseconds wait_timeout, int max_clients, bool register_ring
+) {
+    thread = std::jthread{
+        [this](
+            int pipeline, int min_batch_size, std::chrono::nanoseconds wait_timeout, int max_clients, bool register_ring
+        ) {
+            io_uring.start();
 
-    if (register_ring) {
-        io_uring.register_ring();
-    }
-
-    //    auto& loop_breaked = metric_registry.create_counter("loop-break");
-    auto& wait_time = metric_registry.create_timer("message-received");
-    auto& tasks_per_iteration = metric_registry.create_histogram_double("tasks-per-iteration");
-    //    auto& getattr_timing = metric_registry.create_histogram("message-received-getattr");
-    //    auto& readdir_timing = metric_registry.create_histogram("message-received-readdir");
-    //    auto& open_timing = metric_registry.create_histogram("message-received-open");
-    //    auto& read_timing = metric_registry.create_histogram("message-received-read");
-    //    auto& lookup_timing = metric_registry.create_histogram("message-received-lookup");
-    //    auto& release_timing = metric_registry.create_histogram("message-received-release");
-    //    auto& send_timing = metric_registry.create_histogram("message-sent");
-
-    auto callback =
-        io_uring.get_callback([this, pipeline](int32_t syscall_ret) { accept_callback(syscall_ret, pipeline); });
-    if (register_fd) {
-        io_uring.accept_fixed(socket, std::move(callback));
-    } else {
-        io_uring.accept(socket, std::move(callback));
-    }
-
-    while (!stop_requested) [[likely]] {
-        {
-            auto tracker = wait_time.track_scope();
-            if (auto tasks_run = io_uring.queue_wait(min_batch_size, wait_timeout)) {
-                LOG_TRACE_L3(logger, "looped, {} task executed", tasks_run);
-                tasks_per_iteration += tasks_run;
+            // TODO: Move to .start?
+            if (register_ring) {
+                io_uring.register_ring();
             }
-        }
 
-        if (log_requested) [[unlikely]] {
-            log_requested = false;
-            std::cerr << metric_registry << std::flush;
-        }
-    }
+            io_uring.register_sparse_files(max_clients);
 
-    if (_metrics_on_stop) {
-        std::cerr << metric_registry << std::flush;
-    }
+            auto callback = io_uring.get_callback([this, pipeline](int32_t syscall_ret) {
+                accept_callback(syscall_ret, pipeline);
+            });
+            if (register_fd) {
+                io_uring.accept_fixed(socket, std::move(callback));
+            } else {
+                io_uring.accept(socket, std::move(callback));
+            }
+
+            while (!stop_requested) [[likely]] {
+                {
+                    if (auto tasks_run = io_uring.queue_wait(min_batch_size, wait_timeout)) {
+                        LOG_TRACE_L3(logger, "looped, {} task executed", tasks_run);
+                    }
+                }
+
+                if (log_requested) [[unlikely]] {
+                    log_requested = false;
+                    std::cerr << metric_registry << std::flush;
+                }
+            }
+        },
+        pipeline,
+        min_batch_size,
+        wait_timeout,
+        max_clients,
+        register_ring};
+}
+
+Server::ServerThread::ServerThread(IoUring&& uring, Socket&& s, InodeCache& inode_cache)
+    : thread{},
+      io_uring{std::move(uring)},
+      socket{std::move(s)},
+      syscalls{io_uring, inode_cache},
+      logger{quill::get_logger()} {}
+
+void Server::ServerThread::join() {
+    thread.join();
 }
 
 }  // namespace remotefs

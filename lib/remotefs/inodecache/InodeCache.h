@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 
 #include <cassert>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -59,12 +60,14 @@ class InodeCache {
     // TODO: Make private again
     template <typename... Ts>
     Inode& create_inode(Ts&&... params) {
+        auto lock = std::scoped_lock{cache_lock};
         auto [inode_iter, inserted] = cache.emplace(std::forward<Ts>(params)...);
         inode_iter->second.stat.st_ino = reinterpret_cast<fuse_ino_t>(&*inode_iter);
         return *inode_iter;
     }
 
    private:
+    mutable std::mutex cache_lock{};
     CacheType cache;
     Inode& root;
 };

@@ -31,9 +31,10 @@ struct stat statx_to_stat(const struct statx input) {
 
 }  // namespace
 
-Syscalls::Syscalls(IoUring& ring)
+Syscalls::Syscalls(IoUring& ring, InodeCache& cache)
     : logger{quill::get_logger()},
-      uring{ring} {}
+      uring{ring},
+      inode_cache{cache} {}
 
 void Syscalls::lookup(messages::requests::Lookup& message, int socket) {
     auto ino = message.ino;

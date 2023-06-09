@@ -7,6 +7,7 @@
 
 namespace remotefs {
 const InodeCache::Inode* InodeCache::find(const std::string& path) const {
+    auto lock = std::scoped_lock{cache_lock};
     if (auto found = cache.find(path); found != cache.end()) {
         return &*(found);
     }
@@ -17,8 +18,11 @@ const InodeCache::Inode* InodeCache::find(const std::string& path) const {
 InodeCache::Inode* InodeCache::lookup(std::string path) {
     using Stat = struct stat;
 
-    if (auto found = cache.find(path); found != cache.end()) {
-        return &*(found);
+    {
+        auto lock = std::scoped_lock{cache_lock};
+        if (auto found = cache.find(path); found != cache.end()) {
+            return &*(found);
+        }
     }
 
     auto stats = Stat{};

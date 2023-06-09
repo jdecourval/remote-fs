@@ -1,0 +1,3 @@
+[submodule "xfstests-dev"]
+	path = xfstests-dev
+	url = git://git.kernel.org/pub/scm/fs/xfs/xfstests-dev.git

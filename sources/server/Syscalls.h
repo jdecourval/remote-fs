@@ -18,7 +18,7 @@ class IoUring;
 class Syscalls {
 
    public:
-    explicit Syscalls(IoUring& ring);
+    explicit Syscalls(IoUring& ring, InodeCache& cache);
     void open(messages::requests::Open& message, int socket);
     void lookup(messages::requests::Lookup& message, int socket);
     void getattr(messages::requests::GetAttr& message, int socket);
@@ -30,7 +30,7 @@ class Syscalls {
    private:
     quill::Logger* logger;
     IoUring& uring;
-    InodeCache inode_cache;
+    InodeCache& inode_cache;
 };
 
 }  // namespace remotefs

@@ -7,7 +7,8 @@ thread_local remotefs::CachedRegisteredBuffersResource<remotefs::buffers_size> p
 
 namespace remotefs {
 
-IoUring::IoUring(int queue_depth, int registered_buffers) {
+IoUring::IoUring(int queue_depth, int registered_buffers)
+    : registered_buffers{registered_buffers} {
     if (auto ret = io_uring_queue_init(queue_depth, &ring, 0); ret < 0) {
         throw std::system_error(-ret, std::generic_category(), "Queue initialization");
     }
@@ -16,7 +17,9 @@ IoUring::IoUring(int queue_depth, int registered_buffers) {
     if (registered_buffers > 0) {
         register_sparse_buffers(registered_buffers);
     }
+}
 
+void IoUring::start() {
     pool_per_thread = remotefs::CachedRegisteredBuffersResource<remotefs::buffers_size>{registered_buffers};
     for (auto&& [idx, buffer] : pool_per_thread.view()) {
         assign_buffer(idx, buffer);
@@ -33,12 +36,16 @@ IoUring::IoUring(IoUring&& source) noexcept {
     assert(this != &source);
     ring = source.ring;
     source.ring = {};
+    to_clean_on_submit = std::move(source.to_clean_on_submit);
+    registered_buffers = source.registered_buffers;
 }
 
 IoUring& IoUring::operator=(IoUring&& source) noexcept {
     assert(this != &source);
     ring = source.ring;
     source.ring = {};
+    to_clean_on_submit = std::move(source.to_clean_on_submit);
+    registered_buffers = source.registered_buffers;
     return *this;
 }
 
@@ -206,4 +213,4 @@ void IoUring::write(int fd, std::span<std::byte> source, std::unique_ptr<Callbac
     io_uring_prep_write(sqe, fd, source.data(), source.size(), 0);
 }
 
-}
+}  // namespace remotefs

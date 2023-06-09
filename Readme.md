@@ -1,7 +1,7 @@
 # remote-fs
 
 A WIP remote file system based on fuse that leverages io_uring, SCTP, C++23 and multiple tricks and
-hack to reach good performance.
+hacks to reach good performance.
 
 The components are:
 

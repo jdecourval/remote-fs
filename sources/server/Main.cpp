@@ -60,7 +60,8 @@ int main(int argc, char* argv[]) {
     program.add_argument("-R", "--disable-fragment")
         .help(
             "Enforce that no SCTP fragmentation occurs. "
-            "Have no effect if --chunk-size is smaller than --fragment-size.")
+            "Have no effect if --chunk-size is smaller than --fragment-size."
+        )
         .default_value(false)
         .implicit_value(true);
 
@@ -137,48 +138,29 @@ int main(int argc, char* argv[]) {
     // enable a backtrace that will get flushed when we log CRITICAL
     logger->init_backtrace(2, quill::LogLevel::Critical);
 
-    auto socket_options = remotefs::Socket::Options{program.get<long>("--rx-buffer-size"),
-                                                    program.get<long>("--tx-buffer-size"),
-                                                    program.get<int>("--chunk-size"),
-                                                    program.get<int>("--fragment-size"),
-                                                    64,
-                                                    program.get<bool>("--ordered-delivery"),
-                                                    !program.get<bool>("--nagle"),
-                                                    program.get<bool>("--disable-fragment")};
+    auto socket_options = remotefs::Socket::Options{
+        program.get<long>("--rx-buffer-size"),
+        program.get<long>("--tx-buffer-size"),
+        program.get<int>("--chunk-size"),
+        program.get<int>("--fragment-size"),
+        64,
+        program.get<bool>("--ordered-delivery"),
+        !program.get<bool>("--nagle"),
+        program.get<bool>("--disable-fragment")};
 
     LOG_DEBUG(logger, "Ready to start");
-    if (program.get<int>("--threads") > 1) {
-        auto threads = std::vector<std::jthread>{};
-        for (auto i = 0; i < program.get<int>("--threads"); i++) {
-            threads.emplace_back([&] {
-                auto server = remotefs::Server(
-                    program.get("address"), program.get<int>("port"), socket_options, program.get<bool>("--metrics"),
-                    program.get<int>("--ring-depth"), program.get<int>("--register-buffers")
-                );
+    auto server = remotefs::Server(
+        program.get("address"), program.get<int>("port"), socket_options, program.get<bool>("--metrics"),
+        program.get<int>("--ring-depth"), program.get<int>("--register-buffers"), program.get<int>("--threads")
+    );
 
-                server.start(
-                    program.get<int>("--pipeline"), program.get<int>("--min-batch"),
-                    std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")},
-                    program.get<bool>("--register-ring")
-                );
-            });
-        }
+    server.start(
+        program.get<int>("--pipeline"), program.get<int>("--min-batch"),
+        std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")}, 64, program.get<bool>("--register-ring")
 
-        LOG_INFO(logger, "Waiting for workers");
-        for (auto& thread : threads) {
-            thread.join();
-        }
-    } else {
-        auto server = remotefs::Server(
-            program.get("address"), program.get<int>("port"), socket_options, program.get<bool>("--metrics"),
-            program.get<int>("--ring-depth"), program.get<int>("--register-buffers")
-        );
+    );
 
-        server.start(
-            program.get<int>("--pipeline"), program.get<int>("--min-batch"),
-            std::chrono::nanoseconds{program.get<long>("--batch-wait-timeout")}, program.get<bool>("--register-ring")
-        );
-    }
+    server.join();
 
     LOG_DEBUG(logger, "Cleanly exited");
     return 0;

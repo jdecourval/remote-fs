@@ -79,8 +79,8 @@ class CallbackWithStorage final : public CallbackWithStorageAbstract<Storage> {
     }
 
    public:
-    alignas(buffers_alignment) alignas(Storage) Storage storage;
     Callable callable;
+    alignas(buffers_alignment) alignas(Storage) Storage storage;
 };
 
 class CallbackWithAttachedStorageInterface {};

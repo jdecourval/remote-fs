@@ -44,7 +44,7 @@ TestClient::TestClient(
 }
 
 void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) const {
-    //    LOG_INFO(quill::get_logger(), "Scheduling");
+    LOG_TRACE_L2(quill::get_logger(), "Scheduling");
 
     auto read_callable = [this, max_size_thread](int32_t syscall_ret) mutable {
         if (measure_latency) {
@@ -65,12 +65,18 @@ void TestClient::ClientThread::PipelineStage::read_write(long max_size_thread) c
     using Ping = remotefs::messages::both::Ping<remotefs::IoUring::MaxPayloadForCallback<decltype(read_callable)>()>;
 
     {
-        auto write_callback = uring.get_callback<Ping>([](int) {}, chunk_size);
+        auto write_callback =
+            chunk_size
+                ? uring.get_callback<Ping>(
+                      [](int ret) { LOG_TRACE_L1(quill::get_logger(), "Wrote data: {}", ret); }, chunk_size
+                  )
+                : uring.get_callback<Ping>([](int ret) { LOG_TRACE_L1(quill::get_logger(), "Wrote data: {}", ret); });
         auto view = write_callback->get_storage().view();
         uring.write_fixed(socket, view, std::move(write_callback));
     }
 
-    auto read_callback = uring.get_callback<Ping>(std::move(read_callable), chunk_size);
+    auto read_callback = chunk_size ? uring.get_callback<Ping>(std::move(read_callable), chunk_size)
+                                    : uring.get_callback<Ping>(std::move(read_callable));
     auto view = read_callback->get_storage().view();
     uring.read(socket, view, 0, std::move(read_callback));
 }
@@ -82,6 +88,7 @@ void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout
             [&thread, min_batch_size, wait_timeout, register_ring,
              max_size_thread = max_size / static_cast<int>(threads.size())](std::stop_token stop_token) mutable {
                 thread.start = std::chrono::high_resolution_clock::now();
+                thread.uring.start();
                 if (register_ring) {
                     thread.uring.register_ring();
                 }
@@ -91,7 +98,6 @@ void TestClient::start(int min_batch_size, std::chrono::nanoseconds wait_timeout
                 }
 
                 while (!stop_token.stop_requested() && *thread.stages_running > 0) [[likely]] {
-                    //                    LOG_INFO(quill::get_logger(), "Loop");
                     thread.uring.queue_wait(min_batch_size, wait_timeout);
                 }
                 auto thread_time = std::chrono::duration_cast<std::chrono::duration<double>>(
